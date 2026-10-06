@@ -1,0 +1,55 @@
+# Kong Gateway OSS — declarative (DB-less) configuration.
+#
+# Step 1: routing only, plus a correlation ID on every request.
+# Step 3 adds: key-auth, consumers, ACLs, rate limiting, logging.
+#
+# Path mapping (strip_path: true removes the route prefix, then the service path is prepended):
+#   GET  /api/customers/C001   ->  customer-service:8000/customers/C001
+#   GET  /api/orders/O1001     ->  order-service:8000/orders/O1001
+#   POST /api/agent/query      ->  coordinator-agent:8000/agent/query
+
+_format_version: "3.0"
+_transform: true
+
+services:
+  - name: customer-api
+    url: http://customer-service:8000/customers
+    connect_timeout: 2000
+    read_timeout: 5000
+    write_timeout: 5000
+    retries: 0
+    routes:
+      - name: customer-api-route
+        paths: ["/api/customers"]
+        strip_path: true
+
+  - name: order-api
+    url: http://order-service:8000/orders
+    connect_timeout: 2000
+    read_timeout: 5000
+    write_timeout: 5000
+    retries: 0
+    routes:
+      - name: order-api-route
+        paths: ["/api/orders"]
+        strip_path: true
+
+  - name: agent-api
+    url: http://coordinator-agent:8000/agent
+    connect_timeout: 2000
+    read_timeout: 15000      # agent calls fan out to other agents, so allow longer
+    write_timeout: 15000
+    retries: 0
+    routes:
+      - name: agent-api-route
+        paths: ["/api/agent"]
+        strip_path: true
+
+plugins:
+  # Global: every request gets an X-Correlation-ID (kept if the client already sent one),
+  # forwarded to the backend and echoed back to the client.
+  - name: correlation-id
+    config:
+      header_name: X-Correlation-ID
+      generator: uuid
+      echo_downstream: true

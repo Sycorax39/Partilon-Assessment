@@ -1,0 +1,128 @@
+# ComCo Customer Service Integration Platform
+#
+#   docker compose up --build
+#
+# Only the API gateway is published to the host. Backends, databases and agents live on
+# the internal network and can be reached only through API management.
+
+name: comco-platform
+
+x-python-service: &python-service
+  restart: unless-stopped
+  networks: [internal]
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+    interval: 10s
+    timeout: 3s
+    retries: 5
+    start_period: 10s
+
+services:
+  # ---------- API management ----------
+  gateway:
+    image: kong:3.9
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+    volumes:
+      - ./gateway/kong.yml:/kong/kong.yml:ro
+    ports:
+      - "8000:8000"             # public API entry point
+      - "127.0.0.1:8001:8001"   # Kong Admin API — localhost only, for inspection
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+    depends_on:
+      customer-service: { condition: service_healthy }
+      order-service: { condition: service_healthy }
+      coordinator-agent: { condition: service_healthy }
+
+  # ---------- Customer domain ----------
+  customer-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: customers
+      POSTGRES_USER: ${CUSTOMER_DB_USER:-customer}
+      POSTGRES_PASSWORD: ${CUSTOMER_DB_PASSWORD:-customer_pw}
+    volumes:
+      - customer-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+
+  customer-service:
+    <<: *python-service
+    build: ./services/customer-service
+    environment:
+      DATABASE_URL: postgresql://${CUSTOMER_DB_USER:-customer}:${CUSTOMER_DB_PASSWORD:-customer_pw}@customer-db:5432/customers
+    depends_on:
+      customer-db: { condition: service_healthy }
+
+  # ---------- Order domain ----------
+  order-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: ${ORDER_DB_USER:-order}
+      POSTGRES_PASSWORD: ${ORDER_DB_PASSWORD:-order_pw}
+    volumes:
+      - order-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+
+  order-service:
+    <<: *python-service
+    build: ./services/order-service
+    environment:
+      DATABASE_URL: postgresql://${ORDER_DB_USER:-order}:${ORDER_DB_PASSWORD:-order_pw}@order-db:5432/orders
+    depends_on:
+      order-db: { condition: service_healthy }
+
+  # ---------- Agents ----------
+  coordinator-agent:
+    <<: *python-service
+    build: ./agents/coordinator
+    environment:
+      CUSTOMER_AGENT_URL: http://customer-agent:8000
+      ORDER_AGENT_URL: http://order-agent:8000
+    depends_on:
+      customer-agent: { condition: service_healthy }
+      order-agent: { condition: service_healthy }
+
+  customer-agent:
+    <<: *python-service
+    build: ./agents/customer-agent
+    environment:
+      GATEWAY_URL: http://gateway:8000   # agents call backend APIs through the gateway
+
+  order-agent:
+    <<: *python-service
+    build: ./agents/order-agent
+    environment:
+      GATEWAY_URL: http://gateway:8000
+
+networks:
+  internal:
+
+volumes:
+  customer-db-data:
+  order-db-data:
