@@ -3,8 +3,8 @@
 Prototype integration platform demonstrating REST API design, API management, agentic API
 consumption, Agent-to-Agent (A2A) communication, observability and containerized deployment.
 
-> **Status:** Step 1 — skeleton. All components start and are routed through the API gateway.
-> Business logic is added in later steps (see [Progress](#progress)).
+> **Status:** Step 2 — Customer and Order APIs implemented with their own databases.
+> Gateway security and the agents are added in later steps (see [Progress](#progress)).
 
 ## Architecture (current)
 
@@ -35,11 +35,11 @@ management. Agents also call the backend APIs *through the gateway* (see `docs/D
 | Concern | Choice |
 |---|---|
 | API gateway | Kong Gateway OSS 3.9 (DB-less, declarative `gateway/kong.yml`) |
-| Backend services | Python 3.12 + FastAPI |
+| Backend services | Python 3.12 + FastAPI, psycopg 3 with connection pooling |
 | Data stores | PostgreSQL 16, one instance per service |
 | Agents | Custom Python, deterministic planner |
 | Agent-to-Agent | A2A protocol concepts: Agent Cards + JSON-RPC tasks |
-| Observability | Correlation ID + OpenTelemetry → Jaeger |
+| Observability | Correlation ID + structured JSON logs; OpenTelemetry → Jaeger (Step 7) |
 | Deployment | Docker Compose |
 
 Reasons for each choice: [`docs/DECISIONS.md`](docs/DECISIONS.md).
@@ -48,43 +48,93 @@ Reasons for each choice: [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ```
 gateway/kong.yml              API gateway configuration (routes, plugins)
-services/customer-service/    Customer REST API  (+ customer-db)
-services/order-service/       Order REST API     (+ order-db)
-agents/coordinator/           Coordinator Agent  — exposed as the Agent API
-agents/customer-agent/        Customer Agent     — internal, A2A
-agents/order-agent/           Order Agent        — internal, A2A
-scripts/                      Smoke test / demo scripts
-tests/                        Automated tests
-docs/                         Decisions, architecture, agent & A2A descriptions
+libs/common/                  Shared conventions: error format, correlation ID, JSON logs, DB pool
+services/customer-service/    Customer REST API — app/ (code), db/ (schema + seed)
+services/order-service/       Order REST API    — app/ (code), db/ (schema + seed)
+agents/coordinator/           Coordinator Agent — exposed as the Agent API
+agents/customer-agent/        Customer Agent    — internal, A2A
+agents/order-agent/           Order Agent       — internal, A2A
+docs/openapi/                 Exported OpenAPI 3.1 specs
+docs/DECISIONS.md             Architecture & technology decisions
+scripts/                      Smoke test, OpenAPI export
+tests/                        Automated API tests (pytest)
 ```
 
 ## Running it
 
-Prerequisites: Docker Desktop (or Docker Engine + Compose v2), `curl`, `bash`.
+Prerequisites: Docker Desktop (or Docker Engine + Compose v2), `curl`, `bash`
+(on Windows use Git Bash or WSL for the `.sh` scripts).
 
 ```bash
 docker compose up --build -d     # build and start everything
 docker compose ps                # all services should become "healthy"
-./scripts/smoke-test.sh          # check routing through the gateway
-docker compose logs -f gateway   # watch gateway access logs
+./scripts/smoke-test.sh          # end-to-end check through the gateway
+docker compose logs -f order-service   # structured JSON logs, one line per request
 docker compose down              # stop   (add -v to also delete database data)
 ```
 
-No configuration is needed; defaults live in `docker-compose.yml`. To override database
+No configuration is needed; defaults live in `docker-compose.yml`. Each service creates its
+schema and loads demo data on startup (idempotent, safe to restart). To override database
 credentials, copy `.env.example` to `.env`.
 
-Try it manually:
+### Interactive API docs (Swagger UI)
+
+- Customer API: http://localhost:8000/api/customers/docs
+- Order API: http://localhost:8000/api/orders/docs
+
+### Automated tests
 
 ```bash
-curl -i http://localhost:8000/api/customers   # note the X-Correlation-ID response header
-curl -i http://localhost:8000/api/orders
+pip install -r tests/requirements.txt
+pytest tests/ -v                 # runs against the stack through the gateway
+```
+
+## API overview
+
+All paths below are as seen through the gateway. Full specs: `docs/openapi/*.yaml`.
+
+| Method | Path | Purpose | Success | Errors |
+|---|---|---|---|---|
+| GET | `/api/customers` | List customers (`limit`, `offset`, `email`) | 200 | 400, 503 |
+| GET | `/api/customers/{id}` | Get one customer | 200 | 400, 404, 503 |
+| POST | `/api/customers` | Create a customer | 201 + `Location` | 400, 409, 503 |
+| GET | `/api/orders` | List orders, newest first (`customer_id`, `status`, `limit`, `offset`) | 200 | 400, 503 |
+| GET | `/api/orders/{id}` | Get one order with its items | 200 | 400, 404, 503 |
+| POST | `/api/orders` | Place an order (status PENDING, total computed) | 201 + `Location` | 400, 503 |
+| PATCH | `/api/orders/{id}` | Change status (enforced lifecycle) | 200 | 400, 404, 409, 503 |
+
+**Latest order for a customer:** `GET /api/orders?customer_id=C001&limit=1`
+
+**Error format** (every API, every error):
+
+```json
+{
+  "error": {
+    "code": "CUSTOMER_NOT_FOUND",
+    "message": "Customer C999 was not found",
+    "details": null,
+    "correlation_id": "6f1c2a9e-..."
+  }
+}
+```
+
+**Demo data:** customers C001–C005 (C004 has no orders; C999 does not exist).
+Orders O1001–O1007; O1001 is C001's oldest order (DELIVERED), O1006 is C001's latest (SHIPPED).
+
+```bash
+curl -i http://localhost:8000/api/customers/C001
+curl -i http://localhost:8000/api/customers/C999                       # 404 CUSTOMER_NOT_FOUND
+curl -i "http://localhost:8000/api/orders?customer_id=C001&limit=1"    # latest order
+curl -i -X POST http://localhost:8000/api/customers \
+     -H "Content-Type: application/json" \
+     -d '{"name":"Pim Rattanakul","email":"pim.r@example.com"}'        # 201 + Location
 ```
 
 ## Progress
 
 - [x] Step 0 — Stack chosen and justified (`docs/DECISIONS.md`)
 - [x] Step 1 — Repo skeleton, Docker Compose, gateway routing
-- [ ] Step 2 — Customer & Order services with data, validation, error model, OpenAPI
+- [x] Step 2 — Customer & Order services with data, validation, error model, OpenAPI, tests
 - [ ] Step 3 — Gateway security: API keys, ACLs, rate limiting, logging
 - [ ] Step 4 — Customer & Order agents (Agent Cards, A2A tasks)
 - [ ] Step 5 — Coordinator agent: planning, discovery, delegation
@@ -93,6 +143,16 @@ curl -i http://localhost:8000/api/orders
 - [ ] Step 8 — Tests and API collection
 - [ ] Step 9 — Final documentation
 
-## Assumptions, limitations, incomplete functionality
+## Assumptions
 
-To be completed as the build progresses (required by the brief).
+- Customer and order IDs follow the brief's examples: `C` + 3–6 digits, `O` + 4–8 digits.
+- Single currency per order; THB by default.
+- The Order Service does not verify that the customer exists when an order is created
+  (keeps the services decoupled; see `docs/DECISIONS.md`, D10).
+
+## Known limitations
+
+- No authentication yet (added at the gateway in Step 3).
+- Schema migrations run at service startup instead of through a migration tool.
+- Customers cannot be updated or deleted; orders cannot have their items changed
+  (not needed for the assessment scenarios).

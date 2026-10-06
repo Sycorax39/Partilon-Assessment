@@ -1,0 +1,475 @@
+openapi: 3.1.0
+info:
+  title: Order API
+  description: 'Manages ComCo customer orders. Errors use the platform-wide error
+    format `{"error": {code, message, details, correlation_id}}`.'
+  version: 1.0.0
+servers:
+- url: http://localhost:8000/api
+  description: Local API gateway
+paths:
+  /orders:
+    get:
+      tags:
+      - orders
+      summary: List orders (newest first)
+      description: Filter by customer and/or status. Use `customer_id=C001&limit=1`
+        for a customer's latest order. A customer with no orders returns an empty
+        `data` list, not 404.
+      operationId: list_orders_orders_get
+      parameters:
+      - name: customer_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            pattern: ^C\d{3,6}$
+          - type: 'null'
+          title: Customer Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - $ref: '#/components/schemas/OrderStatus'
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: A dependency (e.g. the database) is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - orders
+      summary: Place an order
+      description: 'Creates the order in PENDING status. The total is calculated by
+        the server. The customer ID is format-checked only (see README: assumptions).'
+      operationId: create_order_orders_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: A dependency (e.g. the database) is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /orders/{order_id}:
+    get:
+      tags:
+      - orders
+      summary: Get an order by ID
+      operationId: get_order_orders__order_id__get
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^O\d{4,8}$
+          description: Order ID, e.g. O1001
+          examples:
+          - O1001
+          title: Order Id
+        description: Order ID, e.g. O1001
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: A dependency (e.g. the database) is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - orders
+      summary: Change an order's status
+      description: 'Allowed: PENDING→PAID|CANCELLED, PAID→SHIPPED|CANCELLED, SHIPPED→DELIVERED.
+        Other moves return 409 INVALID_STATUS_TRANSITION.'
+      operationId: update_order_status_orders__order_id__patch
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^O\d{4,8}$
+          description: Order ID, e.g. O1001
+          examples:
+          - O1001
+          title: Order Id
+        description: Order ID, e.g. O1001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderStatusUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict with the current state of the resource
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: A dependency (e.g. the database) is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    ErrorBody:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+        details:
+          anyOf:
+          - items:
+              type: object
+            type: array
+          - type: 'null'
+          title: Details
+        correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Id
+      type: object
+      required:
+      - code
+      - message
+      title: ErrorBody
+    ErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      type: object
+      required:
+      - error
+      title: ErrorResponse
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    Order:
+      properties:
+        order_id:
+          type: string
+          title: Order Id
+          examples:
+          - O1001
+        customer_id:
+          type: string
+          title: Customer Id
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        currency:
+          type: string
+          title: Currency
+        total_amount:
+          type: string
+          title: Total Amount
+          description: Serialized as a string to avoid floating-point rounding
+        items:
+          items:
+            $ref: '#/components/schemas/OrderItem'
+          type: array
+          title: Items
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - order_id
+      - customer_id
+      - status
+      - currency
+      - total_amount
+      - items
+      - created_at
+      - updated_at
+      title: Order
+    OrderCreate:
+      properties:
+        customer_id:
+          type: string
+          pattern: ^C\d{3,6}$
+          title: Customer Id
+        currency:
+          type: string
+          pattern: ^[A-Z]{3}$
+          title: Currency
+          default: THB
+        items:
+          items:
+            $ref: '#/components/schemas/OrderItemIn'
+          type: array
+          maxItems: 50
+          minItems: 1
+          title: Items
+      additionalProperties: false
+      type: object
+      required:
+      - customer_id
+      - items
+      title: OrderCreate
+      description: Request body for placing an order. ID, status (PENDING) and total
+        are set by the server.
+      examples:
+      - currency: THB
+        customer_id: C004
+        items:
+        - product_name: Wireless Mouse
+          quantity: 2
+          sku: MSE-WL-01
+          unit_price: '590.00'
+    OrderItem:
+      properties:
+        line_no:
+          type: integer
+          title: Line No
+        sku:
+          type: string
+          title: Sku
+        product_name:
+          type: string
+          title: Product Name
+        quantity:
+          type: integer
+          title: Quantity
+        unit_price:
+          type: string
+          title: Unit Price
+      type: object
+      required:
+      - line_no
+      - sku
+      - product_name
+      - quantity
+      - unit_price
+      title: OrderItem
+    OrderItemIn:
+      properties:
+        sku:
+          type: string
+          maxLength: 40
+          minLength: 1
+          title: Sku
+        product_name:
+          type: string
+          maxLength: 120
+          minLength: 1
+          title: Product Name
+        quantity:
+          type: integer
+          maximum: 1000.0
+          exclusiveMinimum: 0.0
+          title: Quantity
+        unit_price:
+          anyOf:
+          - type: number
+            minimum: 0.0
+          - type: string
+          title: Unit Price
+      additionalProperties: false
+      type: object
+      required:
+      - sku
+      - product_name
+      - quantity
+      - unit_price
+      title: OrderItemIn
+    OrderList:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/Order'
+          type: array
+          title: Data
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+      type: object
+      required:
+      - data
+      - pagination
+      title: OrderList
+    OrderStatus:
+      type: string
+      enum:
+      - PENDING
+      - PAID
+      - SHIPPED
+      - DELIVERED
+      - CANCELLED
+      title: OrderStatus
+    OrderStatusUpdate:
+      properties:
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+      additionalProperties: false
+      type: object
+      required:
+      - status
+      title: OrderStatusUpdate
+    Pagination:
+      properties:
+        limit:
+          type: integer
+          title: Limit
+        offset:
+          type: integer
+          title: Offset
+        total:
+          type: integer
+          title: Total
+      type: object
+      required:
+      - limit
+      - offset
+      - total
+      title: Pagination
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
