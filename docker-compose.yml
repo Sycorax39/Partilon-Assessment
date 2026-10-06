@@ -66,7 +66,9 @@ services:
 
   customer-service:
     <<: *python-service
-    build: ./services/customer-service
+    build:
+      context: .                                   # repo root, so the shared libs/common is available
+      dockerfile: services/customer-service/Dockerfile
     environment:
       DATABASE_URL: postgresql://${CUSTOMER_DB_USER:-customer}:${CUSTOMER_DB_PASSWORD:-customer_pw}@customer-db:5432/customers
     depends_on:
@@ -91,7 +93,9 @@ services:
 
   order-service:
     <<: *python-service
-    build: ./services/order-service
+    build:
+      context: .
+      dockerfile: services/order-service/Dockerfile
     environment:
       DATABASE_URL: postgresql://${ORDER_DB_USER:-order}:${ORDER_DB_PASSWORD:-order_pw}@order-db:5432/orders
     depends_on:

@@ -1,0 +1,336 @@
+openapi: 3.1.0
+info:
+  title: Customer API
+  description: 'Manages ComCo customer information. Errors use the platform-wide error
+    format `{"error": {code, message, details, correlation_id}}`.'
+  version: 1.0.0
+servers:
+- url: http://localhost:8000/api
+  description: Local API gateway
+paths:
+  /customers:
+    get:
+      tags:
+      - customers
+      summary: List customers
+      operationId: list_customers_customers_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: email
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 254
+          - type: 'null'
+          description: Exact email match
+          title: Email
+        description: Exact email match
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerList'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: A dependency (e.g. the database) is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - customers
+      summary: Create a customer
+      operationId: create_customer_customers_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict with the current state of the resource
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: A dependency (e.g. the database) is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /customers/{customer_id}:
+    get:
+      tags:
+      - customers
+      summary: Get a customer by ID
+      operationId: get_customer_customers__customer_id__get
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^C\d{3,6}$
+          description: Customer ID, e.g. C001
+          examples:
+          - C001
+          title: Customer Id
+        description: Customer ID, e.g. C001
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: A dependency (e.g. the database) is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    Customer:
+      properties:
+        customer_id:
+          type: string
+          title: Customer Id
+          examples:
+          - C001
+        name:
+          type: string
+          title: Name
+        email:
+          type: string
+          title: Email
+        phone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone
+        tier:
+          $ref: '#/components/schemas/Tier'
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - customer_id
+      - name
+      - email
+      - phone
+      - tier
+      - created_at
+      - updated_at
+      title: Customer
+    CustomerCreate:
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Name
+        email:
+          type: string
+          format: email
+          title: Email
+        phone:
+          anyOf:
+          - type: string
+            pattern: ^\+?[0-9]{7,15}$
+          - type: 'null'
+          title: Phone
+          description: E.164-style, digits only, optional leading +
+        tier:
+          $ref: '#/components/schemas/Tier'
+          default: STANDARD
+      additionalProperties: false
+      type: object
+      required:
+      - name
+      - email
+      title: CustomerCreate
+      description: Request body for creating a customer. The ID is assigned by the
+        server.
+      examples:
+      - email: pim.r@example.com
+        name: Pim Rattanakul
+        phone: '+66867890123'
+        tier: STANDARD
+    CustomerList:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/Customer'
+          type: array
+          title: Data
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+      type: object
+      required:
+      - data
+      - pagination
+      title: CustomerList
+    ErrorBody:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+        details:
+          anyOf:
+          - items:
+              type: object
+            type: array
+          - type: 'null'
+          title: Details
+        correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Id
+      type: object
+      required:
+      - code
+      - message
+      title: ErrorBody
+    ErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      type: object
+      required:
+      - error
+      title: ErrorResponse
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    Pagination:
+      properties:
+        limit:
+          type: integer
+          title: Limit
+        offset:
+          type: integer
+          title: Offset
+        total:
+          type: integer
+          title: Total
+      type: object
+      required:
+      - limit
+      - offset
+      - total
+      title: Pagination
+    Tier:
+      type: string
+      enum:
+      - STANDARD
+      - GOLD
+      - PLATINUM
+      title: Tier
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError

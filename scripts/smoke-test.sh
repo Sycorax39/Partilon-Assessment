@@ -19,9 +19,13 @@ check() {
   fi
 }
 
-check "Customer API routed"  GET  /api/customers   200
-check "Order API routed"     GET  /api/orders      200
-check "Agent API routed"     POST /api/agent/query 501   # 501 = placeholder until Step 5
-check "Unknown route -> 404" GET  /api/unknown     404
+check "Customer API routed"      GET  /api/customers       200
+check "Get customer C001"        GET  /api/customers/C001  200
+check "Unknown customer C999"    GET  /api/customers/C999  404
+check "Order API routed"         GET  /api/orders          200
+check "Get order O1001"          GET  /api/orders/O1001    200
+check "Latest order for C001"    GET  "/api/orders?customer_id=C001&limit=1" 200
+check "Agent API routed"         POST /api/agent/query     501   # 501 = placeholder until Step 5
+check "Unknown route -> 404"     GET  /api/unknown         404
 
 exit $fail
