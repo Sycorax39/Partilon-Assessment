@@ -257,6 +257,12 @@ components:
           - type: string
           - type: 'null'
           title: Correlation Id
+        trace_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Trace Id
+          description: 'Open in Jaeger: http://localhost:16686/trace/<trace_id>'
         duration_ms:
           type: number
           title: Duration Ms

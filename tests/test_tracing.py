@@ -16,9 +16,13 @@ from test_coordinator import AGENT_URLS, build_platform
 from coordinator.main import create_app as create_coordinator  # noqa: E402
 
 EXPORTER = InMemorySpanExporter()
-_provider = TracerProvider()
+# Reuse the global provider if the apps already installed one (OTEL_EXPORTER_OTLP_ENDPOINT set);
+# OpenTelemetry allows setting the global provider only once.
+_provider = trace.get_tracer_provider()
+if not isinstance(_provider, TracerProvider):
+    _provider = TracerProvider()
+    trace.set_tracer_provider(_provider)
 _provider.add_span_processor(SimpleSpanProcessor(EXPORTER))
-trace.set_tracer_provider(_provider)
 
 
 @pytest.fixture
@@ -26,9 +30,21 @@ def traced_coordinator():
     network, customer_gw, order_gw = build_platform()
     app = create_coordinator(a2a_transport=network, agent_urls=AGENT_URLS)
     FastAPIInstrumentor.instrument_app(app, exclude_spans=["receive", "send"])
-    EXPORTER.clear()
     with TestClient(app) as client:
+        EXPORTER.clear()          # after startup: ignore the spans of the startup agent discovery
         yield client, order_gw
+
+
+def is_descendant(span, ancestor) -> bool:
+    """True if `ancestor` is somewhere above `span` (HTTP client/server spans may sit in between)."""
+    by_id = {s.context.span_id: s for s in EXPORTER.get_finished_spans()}
+    while span.parent is not None:
+        if span.parent.span_id == ancestor.context.span_id:
+            return True
+        span = by_id.get(span.parent.span_id)
+        if span is None:
+            return False
+    return False
 
 
 def spans_by_name():
@@ -53,7 +69,7 @@ def test_key_scenario_is_one_trace_with_the_expected_tree(traced_coordinator):
     for skill in ("get_customer", "get_latest_order"):
         delegate, task = spans[f"delegate {skill}"], spans[f"a2a.task {skill}"]
         assert delegate.parent.span_id == root.context.span_id
-        assert task.parent.span_id == delegate.context.span_id     # agent work nested under delegation
+        assert is_descendant(task, delegate)                        # agent work nested under delegation
         assert task.attributes["a2a.outcome"] == "found"
     assert spans["coordinator.plan"].attributes["plan.steps"] == "s1:get_customer -> s2:get_latest_order"
 

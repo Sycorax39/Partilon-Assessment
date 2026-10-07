@@ -1,0 +1,49 @@
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Arial", "fontSize": "15px", "primaryColor": "#eef4fb", "primaryBorderColor": "#5b8ec9", "lineColor": "#55606e"}}}%%
+flowchart TB
+    client(["Client / User<br/><i>apikey: demo-client, chat-frontend</i>"])
+    ops(["Evaluator / Operator<br/>browser"])
+
+    subgraph net["Docker network 'internal' — only the gateway is published (port 8000)"]
+        direction TB
+        gw["<b>API Gateway — Kong OSS 3.9</b><br/>key-auth · ACL · rate limiting · routing<br/>correlation ID · size limit · JSON logs<br/>Prometheus metrics · OpenTelemetry"]
+
+        subgraph apis["Business APIs"]
+            direction LR
+            cs["<b>Customer Service</b><br/>FastAPI · /customers"]
+            os["<b>Order Service</b><br/>FastAPI · /orders"]
+        end
+        cdb[("Customer DB<br/>PostgreSQL")]
+        odb[("Order DB<br/>PostgreSQL")]
+
+        subgraph agents["Agents — A2A protocol (Agent Cards + JSON-RPC tasks)"]
+            direction TB
+            co["<b>Coordinator Agent</b> = Agent API<br/>plan → discover → delegate → answer"]
+            ca["<b>Customer Agent</b><br/>get_customer · find_customer_by_email"]
+            oa["<b>Order Agent</b><br/>get_order · get_latest_order · list_customer_orders"]
+        end
+
+        jg[("<b>Jaeger</b><br/>traces")]
+    end
+
+    client -->|"HTTPS/JSON + apikey"| gw
+    gw -->|"/api/customers"| cs
+    gw -->|"/api/orders"| os
+    gw -->|"/api/agent"| co
+    cs --> cdb
+    os --> odb
+    co -->|"A2A message/send"| ca
+    co -->|"A2A message/send"| oa
+    ca -->|"GET /api/customers/…<br/>key: customer-agent (read-only)"| gw
+    oa -->|"GET /api/orders/…<br/>key: order-agent (read-only)"| gw
+    gw -. "OTLP spans" .-> jg
+    co -. "OTLP" .-> jg
+    ops -->|":16686 UI"| jg
+
+    classDef gateway fill:#fff4e0,stroke:#d08a1e,stroke-width:2px
+    classDef agent fill:#efeafd,stroke:#7a5cc7
+    classDef db fill:#e9f5ec,stroke:#3f8f55
+    classDef obs fill:#f2f2f2,stroke:#888
+    class gw gateway
+    class co,ca,oa agent
+    class cdb,odb db
+    class jg obs

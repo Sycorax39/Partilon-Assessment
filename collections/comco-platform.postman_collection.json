@@ -1,0 +1,1501 @@
+{
+  "info": {
+    "_postman_id": "673117c6-eaa4-5614-a30e-80a879ec23df",
+    "name": "ComCo Integration Platform",
+    "description": "API test collection for the ComCo Customer Service Integration Platform.\n\nCovers the brief's demonstration scenarios through the API gateway: REST APIs, security (401/403), rate limiting (429), the Agent API (single capability, orchestration, unknown data, A2A delegation, multi-agent coordination) and tracing in Jaeger.\n\nFailure scenarios that need containers stopped are in scripts/failure-demo.sh.\n\nRun: import into Postman / Bruno / Insomnia, or `npx newman run collections/comco-platform.postman_collection.json`.\nStart from a fresh database for exact demo values: `docker compose down -v && docker compose up --build -d`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Customer API",
+      "description": "REST design: validation, status codes, one error format. Key: test-runner (full access).",
+      "item": [
+        {
+          "name": "Get customer C001",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/C001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "C001"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.test(\"C001 is Somchai Jaidee (GOLD)\", () => { pm.expect(c.customer_id).to.eql(\"C001\"); pm.expect(c.name).to.eql(\"Somchai Jaidee\"); pm.expect(c.tier).to.eql(\"GOLD\"); });",
+                  "pm.test(\"gateway added X-Correlation-ID\", () => pm.response.to.have.header(\"X-Correlation-ID\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown customer C999 -> 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/C999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "C999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectError(status, code) {",
+                  "  pm.test(`HTTP ${status}`, () => pm.response.to.have.status(status));",
+                  "  const e = pm.response.json().error;",
+                  "  pm.test(`error.code = ${code}`, () => pm.expect(e.code).to.eql(code));",
+                  "  pm.test(\"error has message and correlation_id\", () => { pm.expect(e.message).to.be.a(\"string\"); pm.expect(e.correlation_id).to.be.a(\"string\"); });",
+                  "}",
+                  "",
+                  "expectError(404, 'CUSTOMER_NOT_FOUND');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Malformed ID -> 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/not-an-id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "not-an-id"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectError(status, code) {",
+                  "  pm.test(`HTTP ${status}`, () => pm.response.to.have.status(status));",
+                  "  const e = pm.response.json().error;",
+                  "  pm.test(`error.code = ${code}`, () => pm.expect(e.code).to.eql(code));",
+                  "  pm.test(\"error has message and correlation_id\", () => { pm.expect(e.message).to.be.a(\"string\"); pm.expect(e.correlation_id).to.be.a(\"string\"); });",
+                  "}",
+                  "",
+                  "expectError(400, 'VALIDATION_ERROR');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List customers (paginated)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers?limit=2&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "2"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"2 results + pagination\", () => { pm.expect(b.data).to.have.lengthOf(2); pm.expect(b.pagination.total).to.be.at.least(5); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create customer -> 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman Test\",\n  \"email\": \"postman-{{$timestamp}}{{$randomInt}}@example.com\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Location header\", () => pm.expect(pm.response.headers.get(\"Location\")).to.include(\"/customers/C\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Duplicate email -> 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Dup\",\n  \"email\": \"somchai.j@example.com\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectError(status, code) {",
+                  "  pm.test(`HTTP ${status}`, () => pm.response.to.have.status(status));",
+                  "  const e = pm.response.json().error;",
+                  "  pm.test(`error.code = ${code}`, () => pm.expect(e.code).to.eql(code));",
+                  "  pm.test(\"error has message and correlation_id\", () => { pm.expect(e.message).to.be.a(\"string\"); pm.expect(e.correlation_id).to.be.a(\"string\"); });",
+                  "}",
+                  "",
+                  "expectError(409, 'CUSTOMER_EMAIL_EXISTS');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid body -> 400 with field details",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"email\": \"not-an-email\",\n  \"tier\": \"DIAMOND\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectError(status, code) {",
+                  "  pm.test(`HTTP ${status}`, () => pm.response.to.have.status(status));",
+                  "  const e = pm.response.json().error;",
+                  "  pm.test(`error.code = ${code}`, () => pm.expect(e.code).to.eql(code));",
+                  "  pm.test(\"error has message and correlation_id\", () => { pm.expect(e.message).to.be.a(\"string\"); pm.expect(e.correlation_id).to.be.a(\"string\"); });",
+                  "}",
+                  "",
+                  "expectError(400, 'VALIDATION_ERROR');",
+                  "pm.test(\"details name the bad fields\", () => { const f = pm.response.json().error.details.map(d => d.field); pm.expect(f).to.include.members([\"name\", \"email\", \"tier\"]); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Order API",
+      "description": "Orders, latest order, status lifecycle. Key: test-runner (full access).",
+      "item": [
+        {
+          "name": "Get order O1001",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders/O1001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders",
+                "O1001"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const o = pm.response.json();",
+                  "pm.test(\"O1001 DELIVERED, total as string\", () => { pm.expect(o.status).to.eql(\"DELIVERED\"); pm.expect(o.total_amount).to.eql(\"1880.00\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Latest order of C001",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders?customer_id=C001&limit=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "customer_id",
+                  "value": "C001"
+                },
+                {
+                  "key": "limit",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"latest is O1006 SHIPPED\", () => { const o = pm.response.json().data[0]; pm.expect(o.order_id).to.eql(\"O1006\"); pm.expect(o.status).to.eql(\"SHIPPED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customer without orders (C004) -> empty list",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders?customer_id=C004",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "customer_id",
+                  "value": "C004"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200 with empty data\", () => { pm.response.to.have.status(200); pm.expect(pm.response.json().data).to.be.empty; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown order -> 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders/O9999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders",
+                "O9999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectError(status, code) {",
+                  "  pm.test(`HTTP ${status}`, () => pm.response.to.have.status(status));",
+                  "  const e = pm.response.json().error;",
+                  "  pm.test(`error.code = ${code}`, () => pm.expect(e.code).to.eql(code));",
+                  "  pm.test(\"error has message and correlation_id\", () => { pm.expect(e.message).to.be.a(\"string\"); pm.expect(e.correlation_id).to.be.a(\"string\"); });",
+                  "}",
+                  "",
+                  "expectError(404, 'ORDER_NOT_FOUND');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create order -> 201 (total computed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": \"C005\",\n  \"items\": [\n    {\n      \"sku\": \"MSE-WL-01\",\n      \"product_name\": \"Wireless Mouse\",\n      \"quantity\": 2,\n      \"unit_price\": \"590.00\"\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const o = pm.response.json();",
+                  "pm.test(\"PENDING, total 1180.00\", () => { pm.expect(o.status).to.eql(\"PENDING\"); pm.expect(o.total_amount).to.eql(\"1180.00\"); });",
+                  "pm.collectionVariables.set(\"newOrderId\", o.order_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pay the new order -> 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders/{{newOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders",
+                "{{newOrderId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"PAID\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200, PAID\", () => { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql(\"PAID\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid transition PAID -> PENDING -> 409",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders/{{newOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders",
+                "{{newOrderId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"PENDING\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectError(status, code) {",
+                  "  pm.test(`HTTP ${status}`, () => pm.response.to.have.status(status));",
+                  "  const e = pm.response.json().error;",
+                  "  pm.test(`error.code = ${code}`, () => pm.expect(e.code).to.eql(code));",
+                  "  pm.test(\"error has message and correlation_id\", () => { pm.expect(e.message).to.be.a(\"string\"); pm.expect(e.correlation_id).to.be.a(\"string\"); });",
+                  "}",
+                  "",
+                  "expectError(409, 'INVALID_STATUS_TRANSITION');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. API management: security and traffic",
+      "description": "Authentication (401), least-privilege access (403), rate limiting (429), correlation.",
+      "item": [
+        {
+          "name": "No API key -> 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/C001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "C001"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid API key -> 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "not-a-real-key"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/C001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "C001"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Chat UI calling Customer API directly -> 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/C001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "C001"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 403 (chat-frontend may only use the Agent API)\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order Agent trying to write -> 403",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "order-agent-key"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders/O1001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders",
+                "O1001"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"PAID\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 403 (agents are read-only)\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customer Agent reading orders -> 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "customer-agent-key"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders/O1001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders",
+                "O1001"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 403 (agents only reach their own API)\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Client correlation ID is kept end to end",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-trace-001"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/C999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "C999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"echoed in header\", () => pm.expect(pm.response.headers.get(\"X-Correlation-ID\")).to.eql(\"postman-trace-001\"));",
+                  "pm.test(\"seen by the backend (error body)\", () => pm.expect(pm.response.json().error.correlation_id).to.eql(\"postman-trace-001\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Quota headers on normal responses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/C001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "C001"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"X-RateLimit-Limit-Minute present\", () => pm.response.to.have.header(\"X-RateLimit-Limit-Minute\"));",
+                  "pm.test(\"X-RateLimit-Remaining-Minute present\", () => pm.response.to.have.header(\"X-RateLimit-Remaining-Minute\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Excessive requests -> 429",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "ratelimit-probe-key"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/C001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "C001"
+              ]
+            },
+            "description": "The ratelimit-probe consumer may make 5 requests per minute. The pre-request script uses up the quota first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 429\", () => pm.response.to.have.status(429));",
+                  "pm.test(\"Retry-After header\", () => pm.response.to.have.header(\"Retry-After\"));"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Use up the 5 requests/minute quota of the ratelimit-probe consumer before the real request.",
+                  "const url = pm.collectionVariables.get(\"baseUrl\") + \"/api/customers/C001\";",
+                  "for (let i = 0; i < 6; i++) {",
+                  "  pm.sendRequest({ url, method: \"GET\", header: { apikey: \"ratelimit-probe-key\" } }, () => {});",
+                  "}",
+                  "setTimeout(() => {}, 1500);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Swagger docs are public",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/customers/docs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "customers",
+                "docs"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Agent API: agentic + A2A scenarios (brief section 5)",
+      "description": "Natural-language requests to the Coordinator Agent. Key: chat-frontend.",
+      "item": [
+        {
+          "name": "Retrieve a customer (single capability)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agent",
+                "query"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Show customer C001\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test(\"answer is present\", () => pm.expect(r.answer).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"correlation_id and trace_id returned\", () => { pm.expect(r.correlation_id).to.be.a(\"string\"); pm.expect(r.trace_id).to.be.a(\"string\"); });",
+                  "console.log(\"ANSWER:\", r.answer);",
+                  "",
+                  "pm.test(\"completed with ONE step: get_customer by Customer Agent\", () => {",
+                  "  pm.expect(r.status).to.eql(\"completed\");",
+                  "  pm.expect(r.steps.map(s => [s.skill, s.agent])).to.eql([[\"get_customer\", \"Customer Agent\"]]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retrieve customer and latest order (orchestration)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agent",
+                "query"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Show customer C001 and their latest order\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test(\"answer is present\", () => pm.expect(r.answer).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"correlation_id and trace_id returned\", () => { pm.expect(r.correlation_id).to.be.a(\"string\"); pm.expect(r.trace_id).to.be.a(\"string\"); });",
+                  "console.log(\"ANSWER:\", r.answer);",
+                  "",
+                  "pm.test(\"completed with get_customer then get_latest_order\", () => {",
+                  "  pm.expect(r.status).to.eql(\"completed\");",
+                  "  pm.expect(r.steps.map(s => s.skill)).to.eql([\"get_customer\", \"get_latest_order\"]);",
+                  "  pm.expect(r.plan[1].depends_on).to.eql([\"s1\"]);",
+                  "});",
+                  "pm.test(\"answer contains O1006 SHIPPED\", () => pm.expect(r.answer).to.include(\"O1006\").and.include(\"SHIPPED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retrieve an unknown customer (no data, nothing invented)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agent",
+                "query"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Show customer C999\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test(\"answer is present\", () => pm.expect(r.answer).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"correlation_id and trace_id returned\", () => { pm.expect(r.correlation_id).to.be.a(\"string\"); pm.expect(r.trace_id).to.be.a(\"string\"); });",
+                  "console.log(\"ANSWER:\", r.answer);",
+                  "",
+                  "pm.test(\"status not_found\", () => pm.expect(r.status).to.eql(\"not_found\"));",
+                  "pm.test(\"answer says not found\", () => pm.expect(r.answer).to.eql(\"Customer C999 was not found.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retrieve an order through agent delegation (A2A)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agent",
+                "query"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What is the status of order O1001?\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test(\"answer is present\", () => pm.expect(r.answer).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"correlation_id and trace_id returned\", () => { pm.expect(r.correlation_id).to.be.a(\"string\"); pm.expect(r.trace_id).to.be.a(\"string\"); });",
+                  "console.log(\"ANSWER:\", r.answer);",
+                  "",
+                  "pm.test(\"delegated to the Order Agent\", () => pm.expect(r.steps[0].agent).to.eql(\"Order Agent\"));",
+                  "pm.test(\"A2A task id returned\", () => pm.expect(r.steps[0].task_id).to.be.a(\"string\"));",
+                  "pm.test(\"O1001 DELIVERED\", () => pm.expect(r.answer).to.include(\"DELIVERED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "KEY SCENARIO: customer and order through multiple agents",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              },
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-key-scenario"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agent",
+                "query"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Find customer C001 and tell me their latest order status\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test(\"answer is present\", () => pm.expect(r.answer).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"correlation_id and trace_id returned\", () => { pm.expect(r.correlation_id).to.be.a(\"string\"); pm.expect(r.trace_id).to.be.a(\"string\"); });",
+                  "console.log(\"ANSWER:\", r.answer);",
+                  "",
+                  "pm.test(\"two agents coordinated\", () => pm.expect(r.steps.map(s => s.agent)).to.eql([\"Customer Agent\", \"Order Agent\"]));",
+                  "pm.test(\"answer: Somchai Jaidee, O1006, SHIPPED\", () => pm.expect(r.answer).to.include(\"Somchai Jaidee\").and.include(\"O1006\").and.include(\"SHIPPED\"));",
+                  "pm.test(\"same correlation ID\", () => pm.expect(r.correlation_id).to.eql(\"postman-key-scenario\"));",
+                  "pm.collectionVariables.set(\"lastTraceId\", pm.response.headers.get(\"X-Trace-Id\") || r.trace_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown customer: order lookup skipped",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agent",
+                "query"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Find customer C999 and tell me their latest order status\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test(\"answer is present\", () => pm.expect(r.answer).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"correlation_id and trace_id returned\", () => { pm.expect(r.correlation_id).to.be.a(\"string\"); pm.expect(r.trace_id).to.be.a(\"string\"); });",
+                  "console.log(\"ANSWER:\", r.answer);",
+                  "",
+                  "pm.test(\"order step skipped with a reason\", () => { pm.expect(r.steps[1].state).to.eql(\"skipped\"); pm.expect(r.steps[1].reason).to.include(\"not found\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Data flows between agents (email -> latest order)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agent",
+                "query"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What is the latest order of somchai.j@example.com?\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test(\"answer is present\", () => pm.expect(r.answer).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"correlation_id and trace_id returned\", () => { pm.expect(r.correlation_id).to.be.a(\"string\"); pm.expect(r.trace_id).to.be.a(\"string\"); });",
+                  "console.log(\"ANSWER:\", r.answer);",
+                  "",
+                  "pm.test(\"step 2 used the customer ID found by step 1\", () => pm.expect(r.steps[1].input).to.eql({ customer_id: \"C001\" }));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unsupported request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agent",
+                "query"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Can you book me a flight?\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test(\"answer is present\", () => pm.expect(r.answer).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"correlation_id and trace_id returned\", () => { pm.expect(r.correlation_id).to.be.a(\"string\"); pm.expect(r.trace_id).to.be.a(\"string\"); });",
+                  "console.log(\"ANSWER:\", r.answer);",
+                  "",
+                  "pm.test(\"status unsupported, no agent called\", () => { pm.expect(r.status).to.eql(\"unsupported\"); pm.expect(r.steps).to.be.empty; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Agent discovery (Agent Cards)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{chatKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/agents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agent",
+                "agents"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"both specialist agents discovered with skills\", () => {",
+                  "  const a = Object.fromEntries(pm.response.json().agents.map(x => [x.name, x.skills.map(s => s.id)]));",
+                  "  pm.expect(a[\"Customer Agent\"]).to.include(\"get_customer\");",
+                  "  pm.expect(a[\"Order Agent\"]).to.include.members([\"get_order\", \"get_latest_order\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Observability: trace one complete request",
+      "description": "Requires the key scenario request above to have run.",
+      "item": [
+        {
+          "name": "Trace of the key scenario in Jaeger",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{jaegerUrl}}/api/traces/{{lastTraceId}}",
+              "host": [
+                "{{jaegerUrl}}"
+              ],
+              "path": [
+                "api",
+                "traces",
+                "{{lastTraceId}}"
+              ]
+            },
+            "description": "Fetches the key scenario's trace from Jaeger's API. Open {{jaegerUrl}}/trace/{{lastTraceId}} to see it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json().data[0];",
+                  "const services = Object.values(t.processes).map(p => p.serviceName);",
+                  "console.log(\"Components in trace:\", services.join(\", \"), \"| spans:\", t.spans.length);",
+                  "pm.test(\"one trace across coordinator, both agents and both services\", () =>",
+                  "  pm.expect(services).to.include.members([\"coordinator-agent\", \"customer-agent\", \"order-agent\", \"customer-service\", \"order-service\"]));",
+                  "pm.test(\"gateway spans in the same trace\", () => pm.expect(services).to.include(\"api-gateway\"));"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 5000);   // components export spans in batches"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "jaegerUrl",
+      "value": "http://localhost:16686"
+    },
+    {
+      "key": "apiKey",
+      "value": "test-runner-key",
+      "description": "Full access, 1000 requests/min (demo-client-key: 20/min)"
+    },
+    {
+      "key": "chatKey",
+      "value": "chat-frontend-key",
+      "description": "Agent API only"
+    },
+    {
+      "key": "newOrderId",
+      "value": ""
+    },
+    {
+      "key": "lastTraceId",
+      "value": ""
+    }
+  ]
+}

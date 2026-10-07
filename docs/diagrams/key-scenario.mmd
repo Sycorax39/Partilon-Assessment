@@ -1,0 +1,29 @@
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Arial", "fontSize": "14px", "primaryColor": "#eef4fb", "primaryBorderColor": "#5b8ec9", "noteBkgColor": "#fff8e1", "noteBorderColor": "#d0a12e"}}}%%
+sequenceDiagram
+    autonumber
+    actor U as Client
+    participant GW as API Gateway (Kong)
+    participant CO as Coordinator Agent
+    participant CA as Customer Agent
+    participant OA as Order Agent
+    participant CS as Customer Service
+    participant OS as Order Service
+
+    U->>GW: POST /api/agent/query<br/>"Find customer C001 and tell me their latest order status"
+    Note over GW: key-auth (chat-frontend) · ACL · rate limit<br/>X-Correlation-ID + trace started
+    GW->>CO: forward
+    Note over CO: PLAN: s1 get_customer(C001)<br/>s2 get_latest_order(C001), only if s1 found
+    Note over CO: DISCOVER via Agent Cards:<br/>get_customer → Customer Agent<br/>get_latest_order → Order Agent
+    CO->>CA: A2A message/send · get_customer(C001)
+    CA->>GW: GET /api/customers/C001 (customer-agent key)
+    GW->>CS: GET /customers/C001
+    CS-->>CA: 200 Somchai Jaidee
+    CA-->>CO: Task completed · outcome found
+    CO->>OA: A2A message/send · get_latest_order(C001)
+    OA->>GW: GET /api/orders?customer_id=C001&limit=1 (order-agent key)
+    GW->>OS: GET /orders?customer_id=C001&limit=1
+    OS-->>OA: 200 [O1006 SHIPPED]
+    OA-->>CO: Task completed · outcome found
+    Note over CO: ANSWER only from task results
+    CO-->>GW: 200 status=completed · answer · reasoning · steps · trace_id
+    GW-->>U: "Customer C001 is Somchai Jaidee … latest order O1006 … SHIPPED"

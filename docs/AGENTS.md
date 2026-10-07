@@ -23,7 +23,7 @@ Design principles:
   customer it can only say "no orders found"; confirming the customer exists is the
   Customer Agent's job. The coordinator combines both.
 - **Never fabricate.** Every answer is built only from API data. "Doesn't exist" and
-  "couldn't check" are reported differently (section 4).
+  "couldn't check" are reported differently (section 5).
 - **Deterministic.** Skill selection uses explicit rules, not an LLM, so every demo run is
   reproducible and needs no model or paid API (allowed by the brief). An LLM-based planner
   could replace the rules behind the same interface.
@@ -277,6 +277,6 @@ python scripts/ask.py "Show customer C001"                                      
 docker compose start customer-agent
 ```
 
-Tests without Docker: `pytest tests/test_agents.py tests/test_coordinator.py -v`. All three
+Tests without Docker: `pytest tests/test_agents.py tests/test_coordinator.py tests/test_resilience.py -v`. All three
 agents run in-process on a simulated network that can take an agent offline, with fake gateways
 that inject backend failures.
