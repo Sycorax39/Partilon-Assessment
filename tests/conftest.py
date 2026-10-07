@@ -11,9 +11,13 @@ import uuid
 import httpx
 import pytest
 
-CUSTOMER_API_URL = os.getenv("CUSTOMER_API_URL", "http://localhost:8000/api/customers").rstrip("/")
-ORDER_API_URL = os.getenv("ORDER_API_URL", "http://localhost:8000/api/orders").rstrip("/")
-API_KEY = os.getenv("API_KEY")  # used from Step 3, when the gateway requires authentication
+GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8000").rstrip("/")
+CUSTOMER_API_URL = os.getenv("CUSTOMER_API_URL", f"{GATEWAY_URL}/api/customers").rstrip("/")
+ORDER_API_URL = os.getenv("ORDER_API_URL", f"{GATEWAY_URL}/api/orders").rstrip("/")
+# The gateway requires an API key. The test suite has its own consumer (see gateway/kong.yml).
+# When calling services directly the header is simply ignored.
+API_KEY = os.getenv("API_KEY", "test-runner-key")
+VIA_GATEWAY = CUSTOMER_API_URL.startswith(GATEWAY_URL)
 
 
 @pytest.fixture(scope="session")

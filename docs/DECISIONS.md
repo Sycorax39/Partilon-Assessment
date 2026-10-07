@@ -47,13 +47,40 @@ Format: **Decision → Why → Trade-off / what I'd do in production.**
   Admin API call, and rate-limit counters are local to one gateway node. In production:
   multiple nodes with Redis-backed rate limiting, and config delivered by CI/CD (decK).
 
-## D4. Authentication: API keys at the gateway (prototype)
+## D4. Security at the gateway: API keys, per-route ACLs, per-consumer rate limits
 
-- **Why:** Simple to demonstrate and to explain. Each consumer (external client, each agent)
-  gets its own key, so the gateway knows *who* is calling and can apply per-consumer
-  rate limits and access rules. Backends trust the gateway and never see raw keys.
-- **Trade-off / production:** OAuth 2.0 client-credentials with short-lived JWTs (Keycloak
-  or similar), mTLS between internal services, keys in a secrets manager instead of a file.
+- **Authentication — API keys (`key-auth`).** Every caller is a named *consumer* with its own
+  key (`apikey` header). Simple to demonstrate and to explain, and it gives the gateway an
+  identity to hang access rules, quotas and logs on. `hide_credentials` strips the key before
+  forwarding, so backends never see it and it never appears in backend logs.
+- **Authorization — least privilege (`acl`).** Each API has a READ route (GET) and a WRITE route
+  (POST/PUT/PATCH/DELETE), and ACL groups are granted per route:
+
+  | Consumer | Customer API | Order API | Agent API |
+  |---|---|---|---|
+  | `demo-client`, `test-runner` (platform-clients) | read + write | read + write | yes |
+  | `chat-frontend` (agent-users) | — | — | yes |
+  | `customer-agent` (customer-readers) | read only | — | — |
+  | `order-agent` (order-readers) | — | read only | — |
+
+  So an AI agent can never change data, a chat UI can't bypass the agent and query raw APIs,
+  and agents can't call back into the coordinator (no loops).
+- **Traffic control (`rate-limiting`) per consumer**, sized to each consumer's role
+  (external demo client 20/min, agents 300/min, a 5/min "probe" consumer for demonstrating
+  429s). Clients see their quota in `X-RateLimit-*` headers and get `Retry-After` on 429.
+  The public docs routes are limited per IP instead. `fault_tolerant: true` means a counter
+  failure lets traffic through rather than causing an outage.
+- **Payload limit:** 1 MB (`request-size-limiting`) → 413.
+- **Public docs:** Swagger UI and the OpenAPI JSON are served on separate unauthenticated
+  routes so evaluators can browse them; the specs declare the `apikey` scheme so
+  "Try it out" works after clicking **Authorize**.
+- **Known gap:** errors produced by the gateway itself (401/403/429/413) use Kong's own body
+  `{"message": "..."}`, not the platform envelope used by the services. Clients should branch
+  on the HTTP status for these. Production fix: Kong custom error templates or a small
+  response-transformation plugin so every error, from any layer, has the same shape.
+- **Production:** OAuth 2.0 client-credentials with short-lived JWTs (e.g. Keycloak) instead
+  of static keys; keys/secrets in a vault, not in `kong.yml`; mTLS between gateway and services;
+  Redis-backed rate limiting so limits hold across several gateway nodes.
 
 ## D5. Agents: custom Python, deterministic planner (LLM optional)
 
@@ -80,6 +107,16 @@ Format: **Decision → Why → Trade-off / what I'd do in production.**
   call the same gateway as any external client, using their own API keys. So agent traffic
   is authenticated, rate-limited and logged like everything else — an AI agent is treated
   as just another API consumer. (Modification to the reference diagram, see README.)
+
+## D8a. Gateway logging and monitoring
+
+- **Logging:** Kong's `file-log` plugin writes one JSON record per request to the gateway's
+  stdout: consumer, route, service, status, request headers (including `X-Correlation-ID`;
+  the API key is already removed) and latencies split into gateway time vs upstream time.
+  The plain nginx access log is turned off to avoid duplicate lines.
+- **Monitoring:** the `prometheus` plugin exposes request counts, status codes, latencies
+  and bandwidth per service/route/consumer at `http://localhost:8100/metrics`.
+  A Prometheus + Grafana dashboard would be the production next step.
 
 ## D8. Observability: correlation ID + OpenTelemetry → Jaeger
 

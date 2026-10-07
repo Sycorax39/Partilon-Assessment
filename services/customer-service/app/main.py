@@ -9,10 +9,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import psycopg
-from fastapi import FastAPI, Path as PathParam, Query, Request, Response
+from fastapi import FastAPI, Path as PathParam, Query, Request, Response, Security
 from fastapi.responses import JSONResponse
 
-from common import APIError, error_docs, setup_service
+from common import APIError, error_docs, gateway_api_key, setup_service
 from common.db import Database
 
 from .models import CUSTOMER_ID_PATTERN, Customer, CustomerCreate, CustomerList, Pagination
@@ -42,6 +42,7 @@ app = FastAPI(
     redoc_url=None,
     openapi_url="/customers/openapi.json",
     lifespan=lifespan,
+    dependencies=[Security(gateway_api_key)],   # documents the gateway's API key requirement
 )
 logger = setup_service(app, SERVICE_NAME)
 

@@ -1,16 +1,78 @@
 # Kong Gateway OSS — declarative (DB-less) configuration.
 #
-# Step 1: routing only, plus a correlation ID on every request.
-# Step 3 adds: key-auth, consumers, ACLs, rate limiting, logging.
+# Request pipeline for every API call (Kong runs plugins in priority order):
 #
-# Path mapping (strip_path: true removes the route prefix, then the service path is prepended):
+#   correlation-id   assign / keep X-Correlation-ID, forward it, echo it back
+#   key-auth         who is calling?             no/invalid key        -> 401
+#   acl              may they call this route?   wrong group           -> 403
+#   rate-limiting    within their quota?         over the limit        -> 429
+#   request-size     body too large?                                   -> 413
+#   proxy            -> backend service (timeouts below)               -> 502/504 if it fails
+#   file-log         one JSON log line per request (consumer, route, status, latencies)
+#   prometheus       metrics at http://localhost:8100/metrics
+#
+# Path mapping for API routes (strip_path removes the route prefix, the service path is prepended):
 #   GET  /api/customers/C001   ->  customer-service:8000/customers/C001
 #   GET  /api/orders/O1001     ->  order-service:8000/orders/O1001
 #   POST /api/agent/query      ->  coordinator-agent:8000/agent/query
+#
+# NOTE: the API keys below are development keys for the prototype only. In production keys
+# (or better, OAuth2 clients) would be issued per consumer and kept in a secrets store.
 
 _format_version: "3.0"
 _transform: true
 
+# ---------------------------------------------------------------------------------------------
+# Consumers: every caller has an identity, a key, access groups and its own rate limit.
+# ---------------------------------------------------------------------------------------------
+consumers:
+  - username: demo-client              # an external application with full API access
+    keyauth_credentials: [{ key: demo-client-key }]
+    acls: [{ group: platform-clients }]
+    plugins:
+      - name: rate-limiting
+        config: { minute: 20, policy: local, limit_by: consumer, fault_tolerant: true }
+
+  - username: chat-frontend            # a chat UI: may only use the Agent API
+    keyauth_credentials: [{ key: chat-frontend-key }]
+    acls: [{ group: agent-users }]
+    plugins:
+      - name: rate-limiting
+        config: { minute: 30, policy: local, limit_by: consumer, fault_tolerant: true }
+
+  - username: customer-agent           # AI agent: read-only access to the Customer API
+    keyauth_credentials: [{ key: customer-agent-key }]
+    acls: [{ group: customer-readers }]
+    plugins:
+      - name: rate-limiting
+        config: { minute: 300, policy: local, limit_by: consumer, fault_tolerant: true }
+
+  - username: order-agent              # AI agent: read-only access to the Order API
+    keyauth_credentials: [{ key: order-agent-key }]
+    acls: [{ group: order-readers }]
+    plugins:
+      - name: rate-limiting
+        config: { minute: 300, policy: local, limit_by: consumer, fault_tolerant: true }
+
+  - username: test-runner              # automated test suite: full access, high limit
+    keyauth_credentials: [{ key: test-runner-key }]
+    acls: [{ group: platform-clients }]
+    plugins:
+      - name: rate-limiting
+        config: { minute: 1000, policy: local, limit_by: consumer, fault_tolerant: true }
+
+  - username: ratelimit-probe          # tiny quota, used only to demonstrate/test HTTP 429
+    keyauth_credentials: [{ key: ratelimit-probe-key }]
+    acls: [{ group: platform-clients }]
+    plugins:
+      - name: rate-limiting
+        config: { minute: 5, policy: local, limit_by: consumer, fault_tolerant: true }
+
+# ---------------------------------------------------------------------------------------------
+# Services and routes
+# Each API has a READ route (GET) and a WRITE route (POST/PUT/PATCH/DELETE) so access can be
+# granted per operation: the agents can read data but can never change it (least privilege).
+# ---------------------------------------------------------------------------------------------
 services:
   - name: customer-api
     url: http://customer-service:8000/customers
@@ -18,10 +80,24 @@ services:
     read_timeout: 5000
     write_timeout: 5000
     retries: 0
+    plugins:
+      - name: key-auth
+        config: { key_names: [apikey], hide_credentials: true }
     routes:
-      - name: customer-api-route
+      - name: customer-api-read
         paths: ["/api/customers"]
+        methods: [GET]
         strip_path: true
+        plugins:
+          - name: acl
+            config: { allow: [platform-clients, customer-readers], hide_groups_header: true }
+      - name: customer-api-write
+        paths: ["/api/customers"]
+        methods: [POST, PUT, PATCH, DELETE]
+        strip_path: true
+        plugins:
+          - name: acl
+            config: { allow: [platform-clients], hide_groups_header: true }
 
   - name: order-api
     url: http://order-service:8000/orders
@@ -29,27 +105,90 @@ services:
     read_timeout: 5000
     write_timeout: 5000
     retries: 0
+    plugins:
+      - name: key-auth
+        config: { key_names: [apikey], hide_credentials: true }
     routes:
-      - name: order-api-route
+      - name: order-api-read
         paths: ["/api/orders"]
+        methods: [GET]
         strip_path: true
+        plugins:
+          - name: acl
+            config: { allow: [platform-clients, order-readers], hide_groups_header: true }
+      - name: order-api-write
+        paths: ["/api/orders"]
+        methods: [POST, PUT, PATCH, DELETE]
+        strip_path: true
+        plugins:
+          - name: acl
+            config: { allow: [platform-clients], hide_groups_header: true }
 
   - name: agent-api
     url: http://coordinator-agent:8000/agent
     connect_timeout: 2000
-    read_timeout: 15000      # agent calls fan out to other agents, so allow longer
+    read_timeout: 15000      # agent requests fan out to other agents, so allow longer
     write_timeout: 15000
     retries: 0
+    plugins:
+      - name: key-auth
+        config: { key_names: [apikey], hide_credentials: true }
     routes:
       - name: agent-api-route
         paths: ["/api/agent"]
+        methods: [GET, POST]
         strip_path: true
+        plugins:
+          - name: acl                 # the agents themselves are NOT allowed here (no call loops)
+            config: { allow: [platform-clients, agent-users], hide_groups_header: true }
 
+  # Public API documentation (Swagger UI + OpenAPI JSON) — no key needed, limited per IP.
+  # These are longer path prefixes than the API routes, so Kong matches them first.
+  # strip_path is false: the service receives /api/customers/docs and serves it under its /api root path.
+  - name: customer-api-docs
+    url: http://customer-service:8000
+    routes:
+      - name: customer-api-docs-route
+        paths: ["/api/customers/docs", "/api/customers/openapi.json"]
+        methods: [GET]
+        strip_path: false
+    plugins:
+      - name: rate-limiting
+        config: { minute: 60, policy: local, limit_by: ip, fault_tolerant: true }
+
+  - name: order-api-docs
+    url: http://order-service:8000
+    routes:
+      - name: order-api-docs-route
+        paths: ["/api/orders/docs", "/api/orders/openapi.json"]
+        methods: [GET]
+        strip_path: false
+    plugins:
+      - name: rate-limiting
+        config: { minute: 60, policy: local, limit_by: ip, fault_tolerant: true }
+
+# ---------------------------------------------------------------------------------------------
+# Global plugins (apply to every request)
+# ---------------------------------------------------------------------------------------------
 plugins:
-  # Global: every request gets an X-Correlation-ID (kept if the client already sent one),
-  # forwarded to the backend and echoed back to the client.
   - name: correlation-id
     config:
       header_name: X-Correlation-ID
       generator: uuid
       echo_downstream: true
+
+  - name: request-size-limiting
+    config: { allowed_payload_size: 1, size_unit: megabytes }
+
+  # One structured JSON line per request on the gateway's stdout: consumer, route, service,
+  # status, latencies and request headers (including X-Correlation-ID; the API key is removed).
+  - name: file-log
+    config: { path: /dev/stdout, reopen: false }
+
+  - name: prometheus
+    config:
+      per_consumer: true
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+      upstream_health_metrics: true

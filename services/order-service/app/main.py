@@ -9,10 +9,10 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Path as PathParam, Query, Request, Response
+from fastapi import FastAPI, Path as PathParam, Query, Request, Response, Security
 from fastapi.responses import JSONResponse
 
-from common import APIError, error_docs, setup_service
+from common import APIError, error_docs, gateway_api_key, setup_service
 from common.db import Database
 
 from .models import (ALLOWED_TRANSITIONS, CUSTOMER_ID_PATTERN, ORDER_ID_PATTERN, Order, OrderCreate,
@@ -43,6 +43,7 @@ app = FastAPI(
     redoc_url=None,
     openapi_url="/orders/openapi.json",
     lifespan=lifespan,
+    dependencies=[Security(gateway_api_key)],   # documents the gateway's API key requirement
 )
 logger = setup_service(app, SERVICE_NAME)
 

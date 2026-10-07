@@ -17,6 +17,8 @@ paths:
         for a customer's latest order. A customer with no orders returns an empty
         `data` list, not 404.
       operationId: list_orders_orders_get
+      security:
+      - GatewayApiKey: []
       parameters:
       - name: customer_id
         in: query
@@ -84,6 +86,8 @@ paths:
       description: 'Creates the order in PENDING status. The total is calculated by
         the server. The customer ID is format-checked only (see README: assumptions).'
       operationId: create_order_orders_post
+      security:
+      - GatewayApiKey: []
       requestBody:
         required: true
         content:
@@ -121,6 +125,8 @@ paths:
       - orders
       summary: Get an order by ID
       operationId: get_order_orders__order_id__get
+      security:
+      - GatewayApiKey: []
       parameters:
       - name: order_id
         in: path
@@ -171,6 +177,8 @@ paths:
       description: 'Allowed: PENDING→PAID|CANCELLED, PAID→SHIPPED|CANCELLED, SHIPPED→DELIVERED.
         Other moves return 409 INVALID_STATUS_TRANSITION.'
       operationId: update_order_status_orders__order_id__patch
+      security:
+      - GatewayApiKey: []
       parameters:
       - name: order_id
         in: path
@@ -473,3 +481,10 @@ components:
       - msg
       - type
       title: ValidationError
+  securitySchemes:
+    GatewayApiKey:
+      type: apiKey
+      description: API key issued per consumer. Validated by the API gateway, not
+        by the service.
+      in: header
+      name: apikey

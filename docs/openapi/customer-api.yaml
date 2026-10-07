@@ -14,6 +14,8 @@ paths:
       - customers
       summary: List customers
       operationId: list_customers_customers_get
+      security:
+      - GatewayApiKey: []
       parameters:
       - name: limit
         in: query
@@ -73,6 +75,8 @@ paths:
       - customers
       summary: Create a customer
       operationId: create_customer_customers_post
+      security:
+      - GatewayApiKey: []
       requestBody:
         required: true
         content:
@@ -116,6 +120,8 @@ paths:
       - customers
       summary: Get a customer by ID
       operationId: get_customer_customers__customer_id__get
+      security:
+      - GatewayApiKey: []
       parameters:
       - name: customer_id
         in: path
@@ -334,3 +340,10 @@ components:
       - msg
       - type
       title: ValidationError
+  securitySchemes:
+    GatewayApiKey:
+      type: apiKey
+      description: API key issued per consumer. Validated by the API gateway, not
+        by the service.
+      in: header
+      name: apikey

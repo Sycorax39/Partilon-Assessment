@@ -3,8 +3,8 @@
 Prototype integration platform demonstrating REST API design, API management, agentic API
 consumption, Agent-to-Agent (A2A) communication, observability and containerized deployment.
 
-> **Status:** Step 2 — Customer and Order APIs implemented with their own databases.
-> Gateway security and the agents are added in later steps (see [Progress](#progress)).
+> **Status:** Step 3 — APIs secured and managed at the gateway (API keys, access control,
+> rate limiting, logging, metrics). The agents are added in later steps (see [Progress](#progress)).
 
 ## Architecture (current)
 
@@ -13,7 +13,7 @@ flowchart TD
     client[Client / User] -->|":8000"| gw
 
     subgraph platform[Docker network: internal]
-        gw["API Gateway (Kong OSS)<br/>routing · correlation ID"]
+        gw["API Gateway (Kong OSS)<br/>auth · ACL · rate limit · routing<br/>correlation ID · logging · metrics"]
         gw -->|/api/customers| cs[Customer Service]
         gw -->|/api/orders| os[Order Service]
         gw -->|/api/agent| co[Coordinator Agent]
@@ -82,11 +82,39 @@ credentials, copy `.env.example` to `.env`.
 - Customer API: http://localhost:8000/api/customers/docs
 - Order API: http://localhost:8000/api/orders/docs
 
+The docs pages are public. To use "Try it out", click **Authorize** and enter an API key,
+e.g. `demo-client-key`.
+
+### API keys (development only)
+
+Every request to an API must carry an `apikey` header. Consumers are defined in
+`gateway/kong.yml`:
+
+| Key | Consumer | Can call | Rate limit |
+|---|---|---|---|
+| `demo-client-key` | External application | Customer, Order, Agent APIs (read + write) | 20/min |
+| `chat-frontend-key` | Chat UI | Agent API only | 30/min |
+| `customer-agent-key` | Customer Agent | Customer API, read only | 300/min |
+| `order-agent-key` | Order Agent | Order API, read only | 300/min |
+| `test-runner-key` | Automated tests | Everything | 1000/min |
+| `ratelimit-probe-key` | Rate-limit demo | Everything | 5/min |
+
+Gateway responses: **401** missing/invalid key, **403** not allowed for this consumer,
+**429** quota exceeded (see `Retry-After` and `X-RateLimit-*` headers), **413** body over 1 MB.
+
+### Logs and metrics
+
+```bash
+docker compose logs -f gateway          # one JSON line per request: consumer, route, status, latencies
+docker compose logs -f customer-service # service logs, same X-Correlation-ID
+curl -s http://localhost:8100/metrics | grep kong_http_requests_total   # Prometheus metrics
+```
+
 ### Automated tests
 
 ```bash
 pip install -r tests/requirements.txt
-pytest tests/ -v                 # runs against the stack through the gateway
+pytest tests/ -v                 # API + gateway security tests, through the gateway
 ```
 
 ## API overview
@@ -122,12 +150,14 @@ All paths below are as seen through the gateway. Full specs: `docs/openapi/*.yam
 Orders O1001–O1007; O1001 is C001's oldest order (DELIVERED), O1006 is C001's latest (SHIPPED).
 
 ```bash
-curl -i http://localhost:8000/api/customers/C001
-curl -i http://localhost:8000/api/customers/C999                       # 404 CUSTOMER_NOT_FOUND
-curl -i "http://localhost:8000/api/orders?customer_id=C001&limit=1"    # latest order
-curl -i -X POST http://localhost:8000/api/customers \
+curl -i -H "apikey: demo-client-key" http://localhost:8000/api/customers/C001
+curl -i -H "apikey: demo-client-key" http://localhost:8000/api/customers/C999      # 404 CUSTOMER_NOT_FOUND
+curl -i -H "apikey: demo-client-key" "http://localhost:8000/api/orders?customer_id=C001&limit=1"  # latest order
+curl -i -X POST http://localhost:8000/api/customers -H "apikey: demo-client-key" \
      -H "Content-Type: application/json" \
-     -d '{"name":"Pim Rattanakul","email":"pim.r@example.com"}'        # 201 + Location
+     -d '{"name":"Pim Rattanakul","email":"pim.r@example.com"}'                    # 201 + Location
+curl -i http://localhost:8000/api/customers/C001                                    # 401 no key
+curl -i -H "apikey: chat-frontend-key" http://localhost:8000/api/customers/C001     # 403 not allowed
 ```
 
 ## Progress
@@ -135,7 +165,7 @@ curl -i -X POST http://localhost:8000/api/customers \
 - [x] Step 0 — Stack chosen and justified (`docs/DECISIONS.md`)
 - [x] Step 1 — Repo skeleton, Docker Compose, gateway routing
 - [x] Step 2 — Customer & Order services with data, validation, error model, OpenAPI, tests
-- [ ] Step 3 — Gateway security: API keys, ACLs, rate limiting, logging
+- [x] Step 3 — Gateway security: API keys, ACLs, rate limiting, logging, metrics
 - [ ] Step 4 — Customer & Order agents (Agent Cards, A2A tasks)
 - [ ] Step 5 — Coordinator agent: planning, discovery, delegation
 - [ ] Step 6 — Failure handling (timeouts, unavailable backend/agent)
@@ -152,7 +182,10 @@ curl -i -X POST http://localhost:8000/api/customers \
 
 ## Known limitations
 
-- No authentication yet (added at the gateway in Step 3).
+- API keys are static and stored in `gateway/kong.yml` (development keys only).
+- Errors generated by the gateway itself (401/403/429/413) use Kong's `{"message": ...}` body,
+  not the platform error envelope (see `docs/DECISIONS.md`, D4).
+- Rate-limit counters are local to one gateway node.
 - Schema migrations run at service startup instead of through a migration tool.
 - Customers cannot be updated or deleted; orders cannot have their items changed
   (not needed for the assessment scenarios).
