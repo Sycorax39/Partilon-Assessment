@@ -22,6 +22,8 @@ from .planner import Plan, PlanStep
 
 logger = logging.getLogger(__name__)
 
+AGENT_RETRY_DELAY = 0.3   # seconds before the single retry of a refused connection
+
 
 @dataclass
 class StepResult:
@@ -98,15 +100,25 @@ class Executor:
             logger.info("delegating step", extra={"fields": {
                 "event": "a2a.delegate", "step": step.id, "skill": step.skill, "agent": agent.name,
                 "input": result.input}})
-            try:
-                task = await self.client.send(agent.endpoint, skill=step.skill, input=result.input,
-                                              timeout=self.task_timeout)
-                _from_task(result, task)
-            except A2AClientError as exc:
-                self.registry.mark_stale()          # re-discover next time
-                result.state = "failed"
-                result.error = {"code": exc.code, "retryable": exc.retryable,
-                                "message": f"{agent.name} is unavailable: {exc.message}"}
+            for attempt in (1, 2):
+                try:
+                    task = await self.client.send(agent.endpoint, skill=step.skill, input=result.input,
+                                                  timeout=self.task_timeout)
+                    _from_task(result, task)
+                    break
+                except A2AClientError as exc:
+                    # Connection refused = the request never reached the agent (e.g. it is restarting),
+                    # so one quick retry is safe. Timeouts are NOT retried: the agent may still be
+                    # working, and a retry would double the wait.
+                    if exc.code == "AGENT_UNREACHABLE" and attempt == 1:
+                        logger.warning("agent unreachable, retrying once", extra={"fields": {
+                            "event": "a2a.retry", "step": step.id, "agent": agent.name}})
+                        await asyncio.sleep(AGENT_RETRY_DELAY)
+                        continue
+                    self.registry.mark_stale()          # re-discover next time
+                    result.state = "failed"
+                    result.error = {"code": exc.code, "retryable": exc.retryable, "attempts": attempt,
+                                    "message": f"{agent.name} is unavailable: {exc.message}"}
         finally:
             result.duration_ms = round((time.perf_counter() - started) * 1000, 1)
             logger.info("step finished", extra={"fields": {

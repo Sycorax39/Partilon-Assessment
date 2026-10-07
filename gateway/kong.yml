@@ -77,9 +77,9 @@ services:
   - name: customer-api
     url: http://customer-service:8000/customers
     connect_timeout: 2000
-    read_timeout: 5000
+    read_timeout: 4000       # < agent's 5 s API timeout, so the gateway reports a clean 504 first
     write_timeout: 5000
-    retries: 0
+    retries: 0               # no gateway retries: retries happen once, in the agent (see resilience.py)
     plugins:
       - name: key-auth
         config: { key_names: [apikey], hide_credentials: true }
@@ -102,9 +102,9 @@ services:
   - name: order-api
     url: http://order-service:8000/orders
     connect_timeout: 2000
-    read_timeout: 5000
+    read_timeout: 4000       # < agent's 5 s API timeout, so the gateway reports a clean 504 first
     write_timeout: 5000
-    retries: 0
+    retries: 0               # no gateway retries: retries happen once, in the agent (see resilience.py)
     plugins:
       - name: key-auth
         config: { key_names: [apikey], hide_credentials: true }
@@ -129,7 +129,7 @@ services:
     connect_timeout: 2000
     read_timeout: 15000      # agent requests fan out to other agents, so allow longer
     write_timeout: 15000
-    retries: 0
+    retries: 0               # no gateway retries: retries happen once, in the agent (see resilience.py)
     plugins:
       - name: key-auth
         config: { key_names: [apikey], hide_credentials: true }

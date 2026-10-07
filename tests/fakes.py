@@ -71,9 +71,16 @@ class AgentNetwork(httpx.AsyncBaseTransport):
     def __init__(self, apps: dict):
         self.routes = {host: httpx.ASGITransport(app=app) for host, app in apps.items()}
         self.down: set[str] = set()
+        self.refuse_next: dict[str, int] = {}     # host -> number of connections to refuse (flapping)
+        self.attempts: dict[str, int] = {}
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
+        if request.method == "POST":
+            self.attempts[host] = self.attempts.get(host, 0) + 1
+        if self.refuse_next.get(host, 0) > 0:
+            self.refuse_next[host] -= 1
+            raise httpx.ConnectError(f"connection refused: {host}", request=request)
         if host in self.down or host not in self.routes:
             raise httpx.ConnectError(f"connection refused: {host}", request=request)
         return await self.routes[host].handle_async_request(request)

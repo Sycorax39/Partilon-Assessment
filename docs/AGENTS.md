@@ -107,8 +107,10 @@ Each layer gives up before the layer above it, so the caller always gets a contr
 instead of a gateway timeout:
 
 ```
-API call 5 s  <  agent task 8 s  <  A2A call 10 s  <  whole query 12 s  <  gateway (Kong) 15 s
+gateway->backend 4 s < API call 5 s < agent task 8 s < A2A call 10 s < whole query 12 s < gateway->coordinator 15 s
 ```
+
+Retries, circuit breakers and the full failure matrix: [`FAILURE-HANDLING.md`](FAILURE-HANDLING.md).
 
 ## 3. A2A protocol implementation
 
@@ -203,8 +205,9 @@ ID alone. Anything else is rejected with the list of available skills.
 | API says it doesn't exist (404 `CUSTOMER_NOT_FOUND`) | `completed` | `outcome: not_found`, data `null` | "Customer C999 was not found." |
 | Customer has no orders | `completed` | `outcome: not_found`, `total_orders: 0` | "No orders were found for C004." |
 | Invalid input / unknown skill | `rejected` | error `INVALID_INPUT`, `UNKNOWN_SKILL`, `UNSUPPORTED_REQUEST` | The request couldn't be processed |
-| Backend down (5xx / 502 / 503) | `failed` | error `BACKEND_UNAVAILABLE`, retryable | "Order information is currently unavailable." |
-| API timed out | `failed` | error `UPSTREAM_TIMEOUT`, retryable | same |
+| Backend down (5xx / 502 / 503), after one retry | `failed` | error `BACKEND_UNAVAILABLE`, retryable | "Order information is currently unavailable." |
+| API timed out (504 / no response) | `failed` | error `UPSTREAM_TIMEOUT`, retryable | same |
+| Circuit open after repeated failures | `failed` (immediately, no API call) | error `CIRCUIT_OPEN`, retryable | same |
 | Gateway unreachable | `failed` | error `GATEWAY_UNREACHABLE`, retryable | same |
 | Quota exhausted (429) | `failed` | error `RATE_LIMITED`, retryable | same |
 | Agent's key/permission refused (401/403) | `failed` | error `ACCESS_DENIED`, not retryable | Configuration problem |

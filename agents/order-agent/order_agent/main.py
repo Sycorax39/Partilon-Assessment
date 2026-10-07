@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from a2a_core import A2AAgent, SkillError, SkillResult
 from common import setup_service
 from common.api_client import ApiError, ManagedApiClient
+from common.resilience import RetryPolicy
 
 SERVICE_NAME = "order-agent"
 ORDER_ID_PATTERN = r"^O\d{4,8}$"
@@ -72,6 +73,9 @@ def create_app(api_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI
         api_key=os.getenv("GATEWAY_API_KEY", "order-agent-key"),
         timeout=float(os.getenv("API_TIMEOUT_SECONDS", "5")),
         transport=api_transport,
+        retry=RetryPolicy(max_attempts=int(os.getenv("API_RETRY_ATTEMPTS", "2"))),
+        failure_threshold=int(os.getenv("CIRCUIT_FAILURE_THRESHOLD", "3")),
+        reset_timeout=float(os.getenv("CIRCUIT_RESET_SECONDS", "15")),
     )
     agent = A2AAgent(
         name="Order Agent",
@@ -149,7 +153,8 @@ def create_app(api_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI
 
     @app.get("/health", include_in_schema=False)
     def health():
-        return {"status": "ok", "service": SERVICE_NAME}
+        # The agent is alive even when a backend circuit is open; the circuits show what it can reach.
+        return {"status": "ok", "service": SERVICE_NAME, "circuits": api.circuits()}
 
     return app
 

@@ -130,8 +130,11 @@ services:
       AGENT_URL: http://customer-agent:8000/   # advertised in its Agent Card
       GATEWAY_URL: http://gateway:8000         # agents call backend APIs through the gateway
       GATEWAY_API_KEY: ${CUSTOMER_AGENT_API_KEY:-customer-agent-key}   # its own identity at the gateway
-      API_TIMEOUT_SECONDS: "5"                 # per API call
+      API_TIMEOUT_SECONDS: "5"                 # per API call (the gateway gives up on the backend at 4 s)
       SKILL_TIMEOUT_SECONDS: "8"               # whole task deadline
+      API_RETRY_ATTEMPTS: "2"                  # 1 retry, only for connection errors / 502 / 503
+      CIRCUIT_FAILURE_THRESHOLD: "3"           # consecutive failures before the circuit opens
+      CIRCUIT_RESET_SECONDS: "15"              # how long calls are paused before a trial call
 
   order-agent:
     <<: *python-service
@@ -144,6 +147,9 @@ services:
       GATEWAY_API_KEY: ${ORDER_AGENT_API_KEY:-order-agent-key}
       API_TIMEOUT_SECONDS: "5"
       SKILL_TIMEOUT_SECONDS: "8"
+      API_RETRY_ATTEMPTS: "2"
+      CIRCUIT_FAILURE_THRESHOLD: "3"
+      CIRCUIT_RESET_SECONDS: "15"
 
 networks:
   internal:

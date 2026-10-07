@@ -30,6 +30,7 @@ _REASONS = {
     "AGENT_UNREACHABLE": "the responsible agent is not reachable",
     "AGENT_TIMEOUT": "the responsible agent did not respond in time",
     "NO_AGENT_FOR_SKILL": "no agent offering this capability is available",
+    "CIRCUIT_OPEN": "the backend service failed repeatedly and is being given time to recover",
 }
 
 

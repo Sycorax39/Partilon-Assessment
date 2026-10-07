@@ -140,6 +140,24 @@ Format: **Decision → Why → Trade-off / what I'd do in production.**
   is authenticated, rate-limited and logged like everything else — an AI agent is treated
   as just another API consumer. (Modification to the reference diagram, see README.)
 
+## D11. Failure handling: timeout budget, single-layer retries, circuit breaker
+
+- **Timeout budget** where each layer gives up before the one above: gateway→backend 4 s <
+  agent API call 5 s < agent task 8 s < A2A call 10 s < query 12 s < gateway→coordinator 15 s.
+  Every caller gets a controlled answer from below instead of its own timeout.
+- **Retries at one layer only**, for fast transient failures (connection refused, 502, 503) of
+  idempotent reads: once in the agent (backend calls) and once in the coordinator (refused agent
+  connections). No gateway retries, no retries of timeouts, 4xx or 429. Avoids retry storms
+  (3 layers × 3 attempts = 27 calls per request during an outage).
+- **Circuit breaker per backend API in each agent** (3 failures → open 15 s → one trial call).
+  Turns repeated 4 s timeouts into instant, honest "unavailable" answers and gives the backend
+  room to recover. Hand-written (`libs/common/resilience.py`, ~90 lines) to keep it explainable;
+  production would use a library (e.g. `pybreaker`, `tenacity`) and shared state.
+- **Gateway error bodies left as Kong's default** (`{"message": ...}`). Kong's custom error
+  templates were considered but not adopted: they couldn't be verified in this environment,
+  and a wrong setting stops the gateway from starting. Documented as a known limitation.
+- Details: `docs/FAILURE-HANDLING.md`.
+
 ## D8a. Gateway logging and monitoring
 
 - **Logging:** Kong's `file-log` plugin writes one JSON record per request to the gateway's
