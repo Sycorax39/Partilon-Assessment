@@ -3,8 +3,8 @@
 Prototype integration platform demonstrating REST API design, API management, agentic API
 consumption, Agent-to-Agent (A2A) communication, observability and containerized deployment.
 
-> **Status:** Step 3 — APIs secured and managed at the gateway (API keys, access control,
-> rate limiting, logging, metrics). The agents are added in later steps (see [Progress](#progress)).
+> **Status:** Step 4 — APIs managed at the gateway; Customer and Order agents talk A2A and
+> use the managed APIs. The Coordinator's planning arrives in Step 5 (see [Progress](#progress)).
 
 ## Architecture (current)
 
@@ -38,7 +38,7 @@ management. Agents also call the backend APIs *through the gateway* (see `docs/D
 | Backend services | Python 3.12 + FastAPI, psycopg 3 with connection pooling |
 | Data stores | PostgreSQL 16, one instance per service |
 | Agents | Custom Python, deterministic planner |
-| Agent-to-Agent | A2A protocol concepts: Agent Cards + JSON-RPC tasks |
+| Agent-to-Agent | A2A protocol v0.3 (Agent Cards, JSON-RPC `message/send`, task status), `libs/a2a_core` |
 | Observability | Correlation ID + structured JSON logs; OpenTelemetry → Jaeger (Step 7) |
 | Deployment | Docker Compose |
 
@@ -48,16 +48,19 @@ Reasons for each choice: [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ```
 gateway/kong.yml              API gateway configuration (routes, plugins)
-libs/common/                  Shared conventions: error format, correlation ID, JSON logs, DB pool
+libs/common/                  Shared conventions: error format, correlation ID, JSON logs,
+                              DB pool, managed-API client (agents -> gateway)
+libs/a2a_core/                A2A protocol: Agent Card, tasks, JSON-RPC server/client, CLI
 services/customer-service/    Customer REST API — app/ (code), db/ (schema + seed)
 services/order-service/       Order REST API    — app/ (code), db/ (schema + seed)
-agents/coordinator/           Coordinator Agent — exposed as the Agent API
-agents/customer-agent/        Customer Agent    — internal, A2A
-agents/order-agent/           Order Agent       — internal, A2A
+agents/coordinator/           Coordinator Agent — exposed as the Agent API (planner: Step 5)
+agents/customer-agent/        Customer Agent    — internal, A2A, skills over the Customer API
+agents/order-agent/           Order Agent       — internal, A2A, skills over the Order API
 docs/openapi/                 Exported OpenAPI 3.1 specs
+docs/AGENTS.md                Agent architecture and A2A interaction
 docs/DECISIONS.md             Architecture & technology decisions
-scripts/                      Smoke test, OpenAPI export
-tests/                        Automated API tests (pytest)
+scripts/                      Smoke test, A2A demo, OpenAPI export
+tests/                        Automated tests (pytest): APIs, gateway, agents
 ```
 
 ## Running it
@@ -110,12 +113,28 @@ docker compose logs -f customer-service # service logs, same X-Correlation-ID
 curl -s http://localhost:8100/metrics | grep kong_http_requests_total   # Prometheus metrics
 ```
 
+### Agents (A2A)
+
+The Customer and Order agents are internal. Talk to them with the A2A command-line client
+from inside the coordinator container:
+
+```bash
+bash scripts/a2a-demo.sh         # discovery, skills, not-found, text routing, correlation
+docker compose exec -T coordinator-agent python -m a2a_core.cli --brief send http://order-agent:8000 get_order order_id=O1001
+```
+
+How the agents and the A2A interaction work: [`docs/AGENTS.md`](docs/AGENTS.md).
+
 ### Automated tests
 
 ```bash
 pip install -r tests/requirements.txt
-pytest tests/ -v                 # API + gateway security tests, through the gateway
+pytest tests/ -v                 # everything (API + gateway tests need the stack running)
+pytest tests/test_agents.py -v   # agents only — no Docker needed (fake gateway)
 ```
+
+The tests create extra customers and orders (orders go to C005, so the demo customers stay as
+documented). For a clean demo database: `docker compose down -v && docker compose up --build -d`.
 
 ## API overview
 
@@ -166,7 +185,7 @@ curl -i -H "apikey: chat-frontend-key" http://localhost:8000/api/customers/C001 
 - [x] Step 1 — Repo skeleton, Docker Compose, gateway routing
 - [x] Step 2 — Customer & Order services with data, validation, error model, OpenAPI, tests
 - [x] Step 3 — Gateway security: API keys, ACLs, rate limiting, logging, metrics
-- [ ] Step 4 — Customer & Order agents (Agent Cards, A2A tasks)
+- [x] Step 4 — Customer & Order agents (Agent Cards, A2A tasks, managed-API tools)
 - [ ] Step 5 — Coordinator agent: planning, discovery, delegation
 - [ ] Step 6 — Failure handling (timeouts, unavailable backend/agent)
 - [ ] Step 7 — Observability (OpenTelemetry + Jaeger)
@@ -179,6 +198,8 @@ curl -i -H "apikey: chat-frontend-key" http://localhost:8000/api/customers/C001 
 - Single currency per order; THB by default.
 - The Order Service does not verify that the customer exists when an order is created
   (keeps the services decoupled; see `docs/DECISIONS.md`, D10).
+- Agents run on a private network and trust each other; only their calls to the business
+  APIs are authenticated (at the gateway).
 
 ## Known limitations
 
@@ -187,5 +208,9 @@ curl -i -H "apikey: chat-frontend-key" http://localhost:8000/api/customers/C001 
   not the platform error envelope (see `docs/DECISIONS.md`, D4).
 - Rate-limit counters are local to one gateway node.
 - Schema migrations run at service startup instead of through a migration tool.
+- A2A is a subset of v0.3: synchronous `message/send` and `tasks/get` only (no streaming,
+  push notifications, cancellation or multi-turn tasks). Tasks are kept in memory (last 1000).
+- Agents understand requests through rules (IDs and keywords), not an LLM, so only
+  supported phrasings work.
 - Customers cannot be updated or deleted; orders cannot have their items changed
   (not needed for the assessment scenarios).

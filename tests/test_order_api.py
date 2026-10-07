@@ -1,6 +1,8 @@
 from conftest import ORDER_API_URL as URL, assert_error
 
-NEW_ORDER = {"customer_id": "C004", "items": [
+# Orders created by tests go to C005 so the demo customers stay as documented
+# (C001: latest order O1006; C004: no orders).
+NEW_ORDER = {"customer_id": "C005", "items": [
     {"sku": "MSE-WL-01", "product_name": "Wireless Mouse", "quantity": 2, "unit_price": "590.00"},
     {"sku": "CBL-USBC-2M", "product_name": "USB-C Cable 2m", "quantity": 1, "unit_price": "490.00"}]}
 

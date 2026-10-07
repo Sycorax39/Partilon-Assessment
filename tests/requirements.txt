@@ -1,2 +1,6 @@
 pytest==8.3.4
 httpx==0.28.1
+# for the agent unit tests (tests/test_agents.py), which run the agents in-process
+fastapi==0.115.6
+pydantic==2.10.4
+email-validator==2.2.0

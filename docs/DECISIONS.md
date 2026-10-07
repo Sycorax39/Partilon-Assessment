@@ -91,20 +91,35 @@ Format: **Decision → Why → Trade-off / what I'd do in production.**
 - **Trade-off:** Limited natural-language understanding — only the supported phrasings
   work. This is documented as a known limitation.
 
-## D6. Agent-to-Agent: A2A protocol concepts (Agent Card + JSON-RPC tasks)
+## D6. Agent-to-Agent: A2A protocol v0.3 (JSON-RPC), implemented by hand
 
-- **Why:** A2A is an open, vendor-neutral protocol for agents to discover and call each other.
-  Each specialist agent publishes an **Agent Card** at `/.well-known/agent.json`
-  (name, endpoint, skills). The Coordinator discovers agents from their cards and sends
-  them **tasks** over JSON-RPC; each task returns a **status**
-  (`submitted → working → completed | failed`) and its result.
-- **Trade-off:** Implemented as a minimal subset of the protocol (synchronous request/response,
-  no streaming or push notifications) to keep the prototype readable.
+- **Why A2A:** an open, vendor-neutral protocol for agents to discover and call each other.
+  Each agent publishes an **Agent Card** at `/.well-known/agent-card.json` (name, endpoint,
+  skills with input schemas). Callers send JSON-RPC `message/send`; the agent returns a
+  **Task** with a status (`submitted → working → completed | failed | rejected`), its
+  transition history and result **artifacts**. `tasks/get` re-reads a task.
+- **Why hand-written (`libs/a2a_core`, ~400 lines) instead of the `a2a-sdk` package:**
+  every protocol concept is visible in a small amount of code I can explain line by line,
+  there's no dependency on a fast-changing SDK API, and the wire format still follows the
+  spec, so a real A2A client could talk to these agents. Trade-off: no streaming, push
+  notifications, cancellation or multi-turn tasks (not needed for the scenarios).
+- **Structured and text requests:** a caller can name the skill (`data` part) or send plain
+  text (`text` part), in which case the agent selects the skill with its own rules. This shows
+  tool selection at two levels: the coordinator picks the agent, the agent picks the tool.
+- **Outcome semantics:** "not found" is a *completed* task with `outcome: not_found` (a
+  verified answer); an outage or timeout is a *failed* task with a stable error code and a
+  `retryable` flag (we don't know). Failed tasks carry no artifacts. This is what lets the
+  coordinator answer honestly instead of guessing (see `docs/AGENTS.md`, section 4).
+- **Deadlines:** 5 s per API call, 8 s per task; the gateway's own upstream timeout is 5 s.
+- **Production:** authenticate agent-to-agent calls (mTLS or signed JWTs), persist tasks
+  (currently in memory, last 1000), add streaming for long-running tasks, and keep a registry
+  of Agent Cards instead of configured URLs.
 
 ## D7. Agents call the backends *through the gateway*
 
 - **Why:** The brief says agents must use managed APIs, not databases. Going further, agents
-  call the same gateway as any external client, using their own API keys. So agent traffic
+  call the same gateway as any external client, using their own API keys
+  (`customer-agent-key`, `order-agent-key`), and get **read-only access to their own API only**. So agent traffic
   is authenticated, rate-limited and logged like everything else — an AI agent is treated
   as just another API consumer. (Modification to the reference diagram, see README.)
 

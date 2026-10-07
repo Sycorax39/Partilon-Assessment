@@ -70,4 +70,5 @@ def configure_logging(service: str, level: int = logging.INFO) -> logging.Logger
     # Our middleware writes one access line per request, so silence uvicorn's own access log.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("psycopg.pool").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)   # we log our own outbound calls
     return logging.getLogger(service)
