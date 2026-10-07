@@ -149,3 +149,29 @@ def test_agent_discovery_endpoint():
 
 def test_agent_api_docs_are_public():
     assert call("GET", "/api/agent/docs").status_code == 200
+
+
+# ---- Observability: one request, one trace in Jaeger --------------------------------------------
+
+JAEGER_URL = "http://localhost:16686"
+
+
+def test_gateway_returns_trace_id_and_jaeger_has_the_whole_trace():
+    import time
+    r = call("POST", "/api/agent/query", key="chat-frontend-key",
+             json={"query": "Find customer C001 and tell me their latest order status"})
+    trace_id = r.headers.get("x-trace-id")
+    assert trace_id, "Kong's opentelemetry plugin should return X-Trace-Id"
+    assert r.json()["trace_id"] == trace_id                     # gateway and coordinator: same trace
+
+    expected = {"api-gateway", "coordinator-agent", "customer-agent", "order-agent",
+                "customer-service", "order-service"}
+    services: set = set()
+    for _ in range(20):                                          # spans arrive in batches
+        resp = httpx.get(f"{JAEGER_URL}/api/traces/{trace_id}", timeout=5)
+        if resp.status_code == 200 and resp.json().get("data"):
+            services = {p["serviceName"] for p in resp.json()["data"][0]["processes"].values()}
+            if expected <= services:
+                break
+        time.sleep(1)
+    assert expected <= services, f"components in trace: {sorted(services)}"

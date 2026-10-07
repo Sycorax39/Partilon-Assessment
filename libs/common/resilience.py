@@ -24,6 +24,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from .tracing import event
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,6 +89,7 @@ class CircuitBreaker:
         return max(0.0, self.reset_timeout - (self._clock() - self.opened_at)) if self.state == self.OPEN else 0.0
 
     def _set(self, state: str) -> None:
+        event("circuit state changed", circuit=self.name, from_state=self.state, to_state=state)
         logger.warning("circuit state changed", extra={"fields": {
             "event": "circuit.state", "circuit": self.name, "from": self.state, "to": state,
             "failures": self.failures}})

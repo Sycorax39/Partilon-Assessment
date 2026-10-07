@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from a2a_core import A2AClient, A2AClientError, Task, TaskState
+from common.tracing import annotate, event, mark_error, span
 
 from .discovery import AgentRegistry
 from .planner import Plan, PlanStep
@@ -86,6 +87,15 @@ class Executor:
         self.task_timeout = task_timeout
 
     async def _run_step(self, step: PlanStep, execution: Execution) -> None:
+        with span(f"delegate {step.skill}", **{"step.id": step.id, "a2a.skill": step.skill}) as s:
+            await self._delegate(step, execution)
+            r = execution.results[step.id]
+            annotate(**{"a2a.agent": r.agent, "step.state": r.state, "step.outcome": r.outcome,
+                        "a2a.task.id": r.task_id})
+            if r.state in ("failed", "rejected"):
+                mark_error(s, (r.error or {}).get("code", r.state), (r.error or {}).get("message", ""))
+
+    async def _delegate(self, step: PlanStep, execution: Execution) -> None:
         result = execution.results[step.id]
         started = time.perf_counter()
         try:
@@ -111,6 +121,7 @@ class Executor:
                     # so one quick retry is safe. Timeouts are NOT retried: the agent may still be
                     # working, and a retry would double the wait.
                     if exc.code == "AGENT_UNREACHABLE" and attempt == 1:
+                        event("retry", reason=exc.code, agent=agent.name)
                         logger.warning("agent unreachable, retrying once", extra={"fields": {
                             "event": "a2a.retry", "step": step.id, "agent": agent.name}})
                         await asyncio.sleep(AGENT_RETRY_DELAY)
@@ -149,6 +160,7 @@ class Executor:
                     why = "was not found" if b.outcome == "not_found" else f"did not complete ({b.state})"
                     execution.results[step.id].state = "skipped"
                     execution.results[step.id].reason = f"step {b.id} ({b.skill}) {why}"
+                    event("step skipped", step=step.id, skill=step.skill, reason=execution.results[step.id].reason)
                 else:
                     runnable.append(step)
             await asyncio.gather(*(self._run_step(s, execution) for s in runnable))

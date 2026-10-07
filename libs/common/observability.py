@@ -13,6 +13,8 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
+from .tracing import current_trace_id
+
 CORRELATION_HEADER = "X-Correlation-ID"
 
 # Accept only sane IDs from callers (prevents log injection / oversized headers).
@@ -51,6 +53,7 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "service": self.service,
             "correlation_id": get_correlation_id(),
+            "trace_id": current_trace_id(),        # open http://localhost:16686/trace/<trace_id>
             "message": record.getMessage(),
         }
         fields = getattr(record, "fields", None)
@@ -71,4 +74,5 @@ def configure_logging(service: str, level: int = logging.INFO) -> logging.Logger
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("psycopg.pool").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)   # we log our own outbound calls
+    logging.getLogger("opentelemetry").setLevel(logging.ERROR)   # exporter retries are noisy if Jaeger is down
     return logging.getLogger(service)

@@ -9,6 +9,7 @@
 #   request-size     body too large?                                   -> 413
 #   proxy            -> backend service (timeouts below)               -> 502/504 if it fails
 #   file-log         one JSON log line per request (consumer, route, status, latencies)
+#   opentelemetry    trace spans to Jaeger; trace continues downstream via `traceparent`
 #   prometheus       metrics at http://localhost:8100/metrics
 #
 # Path mapping for API routes (strip_path removes the route prefix, the service path is prepended):
@@ -195,6 +196,16 @@ plugins:
   # status, latencies and request headers (including X-Correlation-ID; the API key is removed).
   - name: file-log
     config: { path: /dev/stdout, reopen: false }
+
+  # Distributed tracing: a span per request (plus routing, plugins and the upstream call), sent to
+  # Jaeger. The W3C `traceparent` header continues the trace into the coordinator / services.
+  # The trace ID is returned to clients in X-Trace-Id (open http://localhost:16686/trace/<id>).
+  - name: opentelemetry
+    config:
+      traces_endpoint: http://jaeger:4318/v1/traces
+      resource_attributes: { service.name: api-gateway }
+      sampling_rate: 1.0
+      http_response_header_for_traceid: X-Trace-Id
 
   - name: prometheus
     config:

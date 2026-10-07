@@ -3,8 +3,8 @@
 Prototype integration platform demonstrating REST API design, API management, agentic API
 consumption, Agent-to-Agent (A2A) communication, observability and containerized deployment.
 
-> **Status:** Step 6 — full flow working with failure handling (timeout budget, retries,
-> circuit breakers, partial answers). Remaining: tracing UI and final docs (see [Progress](#progress)).
+> **Status:** Step 7 — full flow with failure handling and end-to-end distributed tracing
+> (OpenTelemetry → Jaeger). Remaining: final documentation pass (see [Progress](#progress)).
 
 ## Architecture (current)
 
@@ -13,7 +13,7 @@ flowchart TD
     client[Client / User] -->|":8000"| gw
 
     subgraph platform[Docker network: internal]
-        gw["API Gateway (Kong OSS)<br/>auth · ACL · rate limit · routing<br/>correlation ID · logging · metrics"]
+        gw["API Gateway (Kong OSS)<br/>auth · ACL · rate limit · routing<br/>correlation ID · logging · metrics · tracing"]
         gw -->|/api/customers| cs[Customer Service]
         gw -->|/api/orders| os[Order Service]
         gw -->|/api/agent| co[Coordinator Agent]
@@ -23,7 +23,9 @@ flowchart TD
         co -.A2A.-> oa[Order Agent]
         ca -.via gateway.-> gw
         oa -.via gateway.-> gw
+        jg[(Jaeger<br/>traces)]
     end
+    gw & co & ca & oa & cs & os -. OTLP spans .-> jg
 ```
 
 Only the gateway (port 8000) is published to the host. Services, databases and agents are on
@@ -39,7 +41,7 @@ management. Agents also call the backend APIs *through the gateway* (see `docs/D
 | Data stores | PostgreSQL 16, one instance per service |
 | Agents | Custom Python, deterministic planner |
 | Agent-to-Agent | A2A protocol v0.3 (Agent Cards, JSON-RPC `message/send`, task status), `libs/a2a_core` |
-| Observability | Correlation ID + structured JSON logs; OpenTelemetry → Jaeger (Step 7) |
+| Observability | OpenTelemetry traces → Jaeger 2; JSON logs with correlation + trace IDs; Kong Prometheus metrics |
 | Deployment | Docker Compose |
 
 Reasons for each choice: [`docs/DECISIONS.md`](docs/DECISIONS.md).
@@ -49,7 +51,8 @@ Reasons for each choice: [`docs/DECISIONS.md`](docs/DECISIONS.md).
 ```
 gateway/kong.yml              API gateway configuration (routes, plugins)
 libs/common/                  Shared conventions: error format, correlation ID, JSON logs,
-                              DB pool, managed-API client (agents -> gateway), retry + circuit breaker
+                              DB pool, managed-API client (agents -> gateway), retry + circuit breaker,
+                              OpenTelemetry tracing
 libs/a2a_core/                A2A protocol: Agent Card, tasks, JSON-RPC server/client, CLI
 services/customer-service/    Customer REST API — app/ (code), db/ (schema + seed)
 services/order-service/       Order REST API    — app/ (code), db/ (schema + seed)
@@ -59,8 +62,9 @@ agents/order-agent/           Order Agent       — internal, A2A, skills over t
 docs/openapi/                 Exported OpenAPI 3.1 specs
 docs/AGENTS.md                Agent architecture and A2A interaction
 docs/FAILURE-HANDLING.md      Failure matrix, timeout budget, retries, circuit breaker
+docs/OBSERVABILITY.md         Tracing, logs, metrics: following one request end to end
 docs/DECISIONS.md             Architecture & technology decisions
-scripts/                      Smoke test, agent / A2A / failure demos, ask.py client, OpenAPI export
+scripts/                      Smoke test, agent / A2A / failure demos, ask.py + trace.py, OpenAPI export
 tests/                        Automated tests (pytest): APIs, gateway, agents
 ```
 
@@ -105,6 +109,15 @@ Every request to an API must carry an `apikey` header. Consumers are defined in
 
 Gateway responses: **401** missing/invalid key, **403** not allowed for this consumer,
 **429** quota exceeded (see `Retry-After` and `X-RateLimit-*` headers), **413** body over 1 MB.
+
+### Tracing (Jaeger)
+
+```bash
+python scripts/trace.py          # key scenario -> span tree across all components + Jaeger link
+```
+
+Jaeger UI: http://localhost:16686. Every response from the gateway carries `X-Trace-Id`; the
+Agent API also returns `trace_id`. How it works: [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md).
 
 ### Logs and metrics
 
@@ -154,7 +167,7 @@ How the agents and the A2A interaction work: [`docs/AGENTS.md`](docs/AGENTS.md).
 ```bash
 pip install -r tests/requirements.txt
 pytest tests/ -v                 # everything (API + gateway tests need the stack running)
-pytest tests/test_agents.py tests/test_coordinator.py tests/test_resilience.py -v   # no Docker needed
+pytest tests/test_agents.py tests/test_coordinator.py tests/test_resilience.py tests/test_tracing.py -v   # no Docker
 ```
 
 The tests create extra customers and orders (orders go to C005, so the demo customers stay as
@@ -215,7 +228,7 @@ curl -i -H "apikey: chat-frontend-key" http://localhost:8000/api/customers/C001 
 - [x] Step 4 — Customer & Order agents (Agent Cards, A2A tasks, managed-API tools)
 - [x] Step 5 — Coordinator agent: planning, discovery, delegation, answer composition
 - [x] Step 6 — Failure handling (timeout budget, retries, circuit breaker, partial answers)
-- [ ] Step 7 — Observability (OpenTelemetry + Jaeger)
+- [x] Step 7 — Observability (OpenTelemetry traces in Jaeger, linked logs, metrics)
 - [ ] Step 8 — Tests and API collection
 - [ ] Step 9 — Final documentation
 
@@ -233,6 +246,7 @@ curl -i -H "apikey: chat-frontend-key" http://localhost:8000/api/customers/C001 
 - API keys are static and stored in `gateway/kong.yml` (development keys only).
 - Errors generated by the gateway itself (401/403/429/413) use Kong's `{"message": ...}` body,
   not the platform error envelope (see `docs/DECISIONS.md`, D4).
+- Jaeger stores traces in memory (lost on restart) and samples 100 % of requests.
 - Rate-limit counters and circuit-breaker state are local to one process (one gateway node,
   one agent instance).
 - Schema migrations run at service startup instead of through a migration tool.

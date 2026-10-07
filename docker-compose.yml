@@ -7,6 +7,11 @@
 
 name: comco-platform
 
+# Every Python component sends traces to Jaeger (OpenTelemetry, OTLP over HTTP).
+x-tracing-env: &tracing-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  OTEL_BSP_SCHEDULE_DELAY: "1000"     # export spans every second (default 5 s) so traces show up quickly
+
 x-python-service: &python-service
   restart: unless-stopped
   networks: [internal]
@@ -29,6 +34,8 @@ services:
       KONG_ADMIN_LISTEN: "0.0.0.0:8001"
       KONG_STATUS_LISTEN: "0.0.0.0:8100"   # Prometheus metrics at /metrics
       KONG_PROXY_ACCESS_LOG: "off"         # replaced by the richer JSON file-log plugin (kong.yml)
+      KONG_TRACING_INSTRUMENTATIONS: request,router,balancer,plugin_access   # spans for the opentelemetry plugin
+      KONG_TRACING_SAMPLING_RATE: "1.0"    # trace every request (demo); production would sample
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
       KONG_ADMIN_ERROR_LOG: /dev/stderr
@@ -72,6 +79,7 @@ services:
       context: .                                   # repo root, so the shared libs/common is available
       dockerfile: services/customer-service/Dockerfile
     environment:
+      <<: *tracing-env
       DATABASE_URL: postgresql://${CUSTOMER_DB_USER:-customer}:${CUSTOMER_DB_PASSWORD:-customer_pw}@customer-db:5432/customers
     depends_on:
       customer-db: { condition: service_healthy }
@@ -99,6 +107,7 @@ services:
       context: .
       dockerfile: services/order-service/Dockerfile
     environment:
+      <<: *tracing-env
       DATABASE_URL: postgresql://${ORDER_DB_USER:-order}:${ORDER_DB_PASSWORD:-order_pw}@order-db:5432/orders
     depends_on:
       order-db: { condition: service_healthy }
@@ -112,6 +121,7 @@ services:
       context: .
       dockerfile: agents/coordinator/Dockerfile
     environment:
+      <<: *tracing-env
       # Addresses only. WHAT each agent can do is discovered from its Agent Card at startup.
       AGENT_URLS: http://customer-agent:8000,http://order-agent:8000
       AGENT_URL: http://coordinator-agent:8000/   # advertised in the coordinator's own Agent Card
@@ -127,6 +137,7 @@ services:
       context: .
       dockerfile: agents/customer-agent/Dockerfile
     environment:
+      <<: *tracing-env
       AGENT_URL: http://customer-agent:8000/   # advertised in its Agent Card
       GATEWAY_URL: http://gateway:8000         # agents call backend APIs through the gateway
       GATEWAY_API_KEY: ${CUSTOMER_AGENT_API_KEY:-customer-agent-key}   # its own identity at the gateway
@@ -142,6 +153,7 @@ services:
       context: .
       dockerfile: agents/order-agent/Dockerfile
     environment:
+      <<: *tracing-env
       AGENT_URL: http://order-agent:8000/
       GATEWAY_URL: http://gateway:8000
       GATEWAY_API_KEY: ${ORDER_AGENT_API_KEY:-order-agent-key}
@@ -150,6 +162,16 @@ services:
       API_RETRY_ATTEMPTS: "2"
       CIRCUIT_FAILURE_THRESHOLD: "3"
       CIRCUIT_RESET_SECONDS: "15"
+
+  # ---------- Observability ----------
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0     # all-in-one: OTLP receiver + in-memory storage + UI
+    restart: unless-stopped
+    environment:
+      JAEGER_LISTEN_HOST: 0.0.0.0          # accept spans from the other containers
+    ports:
+      - "127.0.0.1:16686:16686"            # Jaeger UI -> http://localhost:16686
+    networks: [internal]
 
 networks:
   internal:

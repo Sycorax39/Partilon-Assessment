@@ -45,7 +45,7 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Security(gateway_api_key)],   # documents the gateway's API key requirement
 )
-logger = setup_service(app, SERVICE_NAME)
+logger = setup_service(app, SERVICE_NAME, database=True)
 
 OrderId = PathParam(pattern=ORDER_ID_PATTERN, description="Order ID, e.g. O1001", examples=["O1001"])
 

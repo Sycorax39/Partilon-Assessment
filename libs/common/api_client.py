@@ -29,6 +29,7 @@ import httpx
 
 from .observability import CORRELATION_HEADER, get_correlation_id
 from .resilience import CircuitBreaker, RetryPolicy
+from .tracing import event
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ class ManagedApiClient:
         while True:
             attempt += 1
             if not breaker.allow():
+                event("circuit open: call not sent", circuit=breaker.name)
                 raise ApiError("CIRCUIT_OPEN",
                                f"{breaker.name} failed repeatedly; calls are paused for "
                                f"{breaker.retry_in():.0f}s to let it recover", True, attempts=attempt - 1)
@@ -115,6 +117,7 @@ class ManagedApiClient:
                     breaker.release()
                 if _retryable(err) and attempt < self.retry.max_attempts and breaker.state == breaker.CLOSED:
                     delay = self.retry.delay(attempt)
+                    event("retry", path=path, attempt=attempt, error=err.code, http_status=err.status_code)
                     logger.warning("api call retry", extra={"fields": {
                         "event": "tool.api_retry", "path": path, "attempt": attempt, "error": err.code,
                         "http_status": err.status_code, "retry_in_ms": round(delay * 1000)}})

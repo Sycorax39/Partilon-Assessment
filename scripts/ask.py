@@ -54,6 +54,8 @@ def main() -> int:
     print(f"{BOLD}Q:{RESET} {r['query']}")
     print(f"{BOLD}A:{RESET} {r['answer']}")
     print(f"{DIM}HTTP {code} · status={r['status']} · {r['duration_ms']} ms · correlation-id={r['correlation_id']}{RESET}")
+    if r.get("trace_id"):
+        print(f"{DIM}Trace: {os.getenv('JAEGER', 'http://localhost:16686')}/trace/{r['trace_id']}{RESET}")
     if r["reasoning"]:
         print(f"{BOLD}Reasoning{RESET}")
         for line in r["reasoning"]:

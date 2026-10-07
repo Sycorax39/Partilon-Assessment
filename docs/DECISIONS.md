@@ -168,14 +168,26 @@ Format: **Decision → Why → Trade-off / what I'd do in production.**
   and bandwidth per service/route/consumer at `http://localhost:8100/metrics`.
   A Prometheus + Grafana dashboard would be the production next step.
 
-## D8. Observability: correlation ID + OpenTelemetry → Jaeger
+## D8. Observability: OpenTelemetry traces → Jaeger, linked to logs by correlation and trace IDs
 
-- **Why:** The gateway assigns an `X-Correlation-ID` to every request; every service and agent
-  logs it (structured JSON logs) and forwards it on every outbound call. OpenTelemetry
-  traces the same path and Jaeger displays it as one end-to-end trace:
-  gateway → coordinator → agent → gateway → backend service.
-- **Trade-off / production:** Add a log aggregator (Loki/ELK), Prometheus + Grafana
-  dashboards and alerting.
+- **Why OpenTelemetry:** the vendor-neutral standard. Kong (its `opentelemetry` plugin) and
+  every Python component emit spans over OTLP, so the backend could be swapped for Tempo,
+  Zipkin or a commercial APM without code changes.
+- **Why Jaeger:** open source, one container (`jaegertracing/jaeger:2.21.0`) with OTLP
+  receiver, storage and UI. It shows the key scenario as one tree across six components.
+- **W3C trace context** (`traceparent`) propagates automatically through instrumented
+  FastAPI apps, httpx clients and Kong; nothing in the business code passes IDs by hand.
+- **Custom spans where the decisions happen:** `coordinator.plan`, `delegate <skill>`,
+  `a2a.task <skill>`, `coordinator.answer`, with events for retries, skipped steps and circuit
+  changes. So the trace explains *why*, not just *what*.
+- **Correlation ID kept alongside the trace ID:** it is shorter, can be chosen by the client,
+  and also appears in error bodies. Both IDs are on every log line, so logs and traces link
+  in both directions.
+- **Tracing is optional at run time:** enabled by `OTEL_EXPORTER_OTLP_ENDPOINT`; without it the
+  OpenTelemetry API is a no-op (unit tests need no collector). Batch export means a Jaeger
+  outage never affects requests.
+- **Production:** OpenTelemetry Collector, persistent trace storage, sampling (head + tail for
+  errors), log shipping (Loki/ELK), Prometheus + Grafana. Details: `docs/OBSERVABILITY.md`.
 
 ## D10. REST API design conventions (Customer & Order APIs)
 

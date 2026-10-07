@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from common.observability import get_correlation_id
+from common.tracing import annotate, mark_error, span
 
 from .models import (INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR,
                      TASK_NOT_FOUND, AgentCard, AgentProvider, AgentSkill, Artifact, DataPart, Message,
@@ -145,6 +146,22 @@ class A2AAgent:
         return Message(role="agent", parts=parts)
 
     async def handle_message(self, message: Message) -> Task:
+        """Execute one A2A message as a task, inside a span named after the skill."""
+        with span("a2a.task", **{"a2a.agent": self.name}) as s:
+            task = await self._execute(message)
+            skill = task.metadata.get("skill")
+            if skill:
+                s.update_name(f"a2a.task {skill}")
+            annotate(**{"a2a.task.id": task.id, "a2a.skill": skill, "a2a.state": task.status.state.value})
+            if task.artifacts:
+                annotate(**{"a2a.outcome": task.artifacts[0].parts[0].data.get("outcome")})
+            if task.status.state in (TaskState.failed, TaskState.rejected):
+                parts = task.status.message.parts if task.status.message else []
+                err = next((p.data.get("error") for p in parts if p.kind == "data"), None) or {}
+                mark_error(s, err.get("code", task.status.state.value), err.get("message", ""))
+            return task
+
+    async def _execute(self, message: Message) -> Task:
         started = time.perf_counter()
         task = Task(contextId=message.contextId or new_id(),
                     status=TaskStatus(state=TaskState.submitted), history=[message],

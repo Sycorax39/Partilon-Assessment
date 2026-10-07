@@ -63,6 +63,14 @@ query "Unsupported request"            "Book me a flight"                       
 check "Agent API requires a key"       POST /api/agent/query 401 -
 check "Agent API docs are public"      GET  /api/agent/docs  200 -
 
+echo "--- Observability ---"
+hdr=$(curl -s -o /dev/null -D - -X POST "$GW/api/agent/query" -H "apikey: chat-frontend-key" \
+      -H "Content-Type: application/json" -d '{"query": "Show customer C001"}')
+tid=$(printf '%s' "$hdr" | grep -i '^x-trace-id' | cut -d' ' -f2 | tr -d '\r')
+if [ -n "$tid" ]; then echo "PASS  Gateway returns X-Trace-Id ($tid)"; else echo "FAIL  no X-Trace-Id header"; fail=1; fi
+s=$(curl -s -o /dev/null -w '%{http_code}' "${JAEGER:-http://localhost:16686}/")
+if [ "$s" = "200" ]; then echo "PASS  Jaeger UI is up (http://localhost:16686)"; else echo "FAIL  Jaeger UI -> $s"; fail=1; fi
+
 echo "--- Rate limiting (ratelimit-probe: 5 requests/minute) ---"
 got429=0
 for i in $(seq 1 8); do

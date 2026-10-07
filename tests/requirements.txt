@@ -4,3 +4,7 @@ httpx==0.28.1
 fastapi==0.115.6
 pydantic==2.10.4
 email-validator==2.2.0
+# custom spans in the agents use the OpenTelemetry API (a no-op without a collector)
+opentelemetry-api==1.29.0
+opentelemetry-sdk==1.29.0
+opentelemetry-instrumentation-fastapi==0.50b0

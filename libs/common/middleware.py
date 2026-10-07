@@ -7,6 +7,7 @@ import time
 from fastapi import FastAPI, Request
 
 from .errors import error_response
+from .tracing import annotate
 from .observability import (CORRELATION_HEADER, reset_correlation_id, resolve_correlation_id,
                             set_correlation_id)
 
@@ -18,6 +19,7 @@ def install_request_middleware(app: FastAPI, logger: logging.Logger) -> None:
     async def correlation_and_access_log(request: Request, call_next):
         correlation_id = resolve_correlation_id(request.headers.get(CORRELATION_HEADER))
         token = set_correlation_id(correlation_id)
+        annotate(**{"correlation.id": correlation_id})   # searchable in Jaeger
         started = time.perf_counter()
         try:
             try:

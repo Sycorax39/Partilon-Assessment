@@ -40,6 +40,9 @@ step "9. Follow the key scenario through every component (correlation ID key-sce
 docker compose logs --no-log-prefix gateway coordinator-agent customer-agent order-agent customer-service order-service 2>/dev/null \
   | grep key-scenario-001 | cut -c1-200
 
+step "10. The same scenario as ONE distributed trace (Jaeger)"
+"$PY" scripts/trace.py
+
 cat <<'EOF'
 
 Failure handling - try it yourself:

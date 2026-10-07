@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from a2a_core import A2AAgent, A2AClient, SkillError, SkillResult
 from common import error_docs, gateway_api_key, get_correlation_id, setup_service
+from common.tracing import annotate, current_trace_id, span
 
 from .answer import compose
 from .discovery import AgentRegistry
@@ -79,6 +80,7 @@ class QueryResponse(BaseModel):
     steps: list[ExecutedStep]
     data: dict[str, Any] = Field(description="Structured results per step ID")
     correlation_id: str | None
+    trace_id: str | None = Field(None, description="Open in Jaeger: http://localhost:16686/trace/<trace_id>")
     duration_ms: float
 
 
@@ -96,7 +98,10 @@ def create_app(a2a_transport: httpx.AsyncBaseTransport | None = None,
 
     async def answer_query(query: str) -> QueryResponse:
         started = time.perf_counter()
-        plan = make_plan(query)
+        with span("coordinator.plan", **{"agent.query": query}):
+            plan = make_plan(query)
+            annotate(**{"plan.steps": " -> ".join(f"{s.id}:{s.skill}" for s in plan.steps) or "(none)",
+                        "plan.reasoning": " | ".join(plan.reasoning)})
         logger.info("plan created", extra={"fields": {
             "event": "coordinator.plan", "query": query,
             "steps": [{"id": s.id, "skill": s.skill, "depends_on": s.depends_on} for s in plan.steps]}})
@@ -112,7 +117,10 @@ def create_app(a2a_transport: httpx.AsyncBaseTransport | None = None,
                         r.error = {"code": "QUERY_TIMEOUT", "retryable": True,
                                    "message": f"Not finished within {query_timeout:g}s"}
         results = execution.ordered(plan)
-        status, answer = compose(plan, results)
+        with span("coordinator.answer"):
+            status, answer = compose(plan, results)
+            annotate(**{"agent.status": status})
+        annotate(**{"agent.status": status, "agent.query": query})   # on the request span too
 
         response = QueryResponse(
             query=query, status=status, answer=answer, reasoning=plan.reasoning,
@@ -121,6 +129,7 @@ def create_app(a2a_transport: httpx.AsyncBaseTransport | None = None,
             steps=[ExecutedStep(**{k: getattr(r, k) for k in ExecutedStep.model_fields}) for r in results],
             data={r.id: r.data for r in results if r.data is not None},
             correlation_id=get_correlation_id(),
+            trace_id=current_trace_id(),
             duration_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         logger.info("query answered", extra={"fields": {

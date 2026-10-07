@@ -8,6 +8,7 @@ from fastapi.security import APIKeyHeader
 from .errors import APIError, ErrorResponse, error_docs, install_error_handlers
 from .middleware import install_request_middleware
 from .observability import CORRELATION_HEADER, configure_logging, get_correlation_id
+from .tracing import setup_tracing
 
 __all__ = ["APIError", "ErrorResponse", "error_docs", "CORRELATION_HEADER", "configure_logging",
            "gateway_api_key", "get_correlation_id", "setup_service"]
@@ -38,10 +39,15 @@ def _document_400_not_422(app: FastAPI) -> None:
     app.openapi = openapi
 
 
-def setup_service(app: FastAPI, service_name: str):
-    """Apply the platform-wide conventions to a FastAPI app. Returns the service logger."""
+def setup_service(app: FastAPI, service_name: str, *, database: bool = False):
+    """Apply the platform-wide conventions to a FastAPI app. Returns the service logger.
+
+    Order matters: tracing is installed last so its middleware is the outermost one, and the
+    request span already exists when the correlation-ID middleware runs.
+    """
     logger = configure_logging(service_name)
     install_error_handlers(app)
     install_request_middleware(app, logger)
     _document_400_not_422(app)
+    setup_tracing(app, service_name, database=database)
     return logger
