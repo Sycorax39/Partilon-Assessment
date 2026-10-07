@@ -121,3 +121,31 @@ def test_oversized_body_is_rejected():
     r = call("POST", "/api/customers", key="test-runner-key", content=big,
              headers={"Content-Type": "application/json"})
     assert r.status_code == 413
+
+
+# ---- Agent API through the gateway --------------------------------------------------------------
+
+def test_chat_frontend_can_use_the_agent_api():
+    r = call("POST", "/api/agent/query", key="chat-frontend-key", json={"query": "Show customer C001"},
+             headers={"X-Correlation-ID": "gw-agent-001"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "completed" and "Somchai Jaidee" in body["answer"]
+    assert body["correlation_id"] == "gw-agent-001"
+
+
+def test_key_scenario_through_the_gateway():
+    r = call("POST", "/api/agent/query", key="chat-frontend-key",
+             json={"query": "Find customer C001 and tell me their latest order status"})
+    body = r.json()
+    assert [s["agent"] for s in body["steps"]] == ["Customer Agent", "Order Agent"]
+    assert "O1006" in body["answer"] and "SHIPPED" in body["answer"]
+
+
+def test_agent_discovery_endpoint():
+    names = {a["name"] for a in call("GET", "/api/agent/agents", key="chat-frontend-key").json()["agents"]}
+    assert names == {"Customer Agent", "Order Agent"}
+
+
+def test_agent_api_docs_are_public():
+    assert call("GET", "/api/agent/docs").status_code == 200

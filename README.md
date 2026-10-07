@@ -3,8 +3,9 @@
 Prototype integration platform demonstrating REST API design, API management, agentic API
 consumption, Agent-to-Agent (A2A) communication, observability and containerized deployment.
 
-> **Status:** Step 4 — APIs managed at the gateway; Customer and Order agents talk A2A and
-> use the managed APIs. The Coordinator's planning arrives in Step 5 (see [Progress](#progress)).
+> **Status:** Step 5 — full flow working: client → gateway → Coordinator → (A2A) → Customer /
+> Order agents → gateway → services. Remaining: failure-handling polish, tracing UI, final docs
+> (see [Progress](#progress)).
 
 ## Architecture (current)
 
@@ -53,13 +54,13 @@ libs/common/                  Shared conventions: error format, correlation ID, 
 libs/a2a_core/                A2A protocol: Agent Card, tasks, JSON-RPC server/client, CLI
 services/customer-service/    Customer REST API — app/ (code), db/ (schema + seed)
 services/order-service/       Order REST API    — app/ (code), db/ (schema + seed)
-agents/coordinator/           Coordinator Agent — exposed as the Agent API (planner: Step 5)
+agents/coordinator/           Coordinator Agent — the Agent API: plan, discover, delegate, answer
 agents/customer-agent/        Customer Agent    — internal, A2A, skills over the Customer API
 agents/order-agent/           Order Agent       — internal, A2A, skills over the Order API
 docs/openapi/                 Exported OpenAPI 3.1 specs
 docs/AGENTS.md                Agent architecture and A2A interaction
 docs/DECISIONS.md             Architecture & technology decisions
-scripts/                      Smoke test, A2A demo, OpenAPI export
+scripts/                      Smoke test, agent + A2A demos, ask.py client, OpenAPI export
 tests/                        Automated tests (pytest): APIs, gateway, agents
 ```
 
@@ -113,7 +114,21 @@ docker compose logs -f customer-service # service logs, same X-Correlation-ID
 curl -s http://localhost:8100/metrics | grep kong_http_requests_total   # Prometheus metrics
 ```
 
-### Agents (A2A)
+### Asking the agents (Agent API)
+
+```bash
+python scripts/ask.py "Find customer C001 and tell me their latest order status"
+bash scripts/agent-demo.sh       # all agent scenarios from the brief, plus a trace
+```
+
+```bash
+curl -X POST http://localhost:8000/api/agent/query -H "apikey: chat-frontend-key" \
+     -H "Content-Type: application/json" -d '{"query": "Show customer C001 and their latest order"}'
+```
+
+Swagger UI for the Agent API: http://localhost:8000/api/agent/docs
+
+### Talking A2A to the specialist agents directly
 
 The Customer and Order agents are internal. Talk to them with the A2A command-line client
 from inside the coordinator container:
@@ -130,7 +145,7 @@ How the agents and the A2A interaction work: [`docs/AGENTS.md`](docs/AGENTS.md).
 ```bash
 pip install -r tests/requirements.txt
 pytest tests/ -v                 # everything (API + gateway tests need the stack running)
-pytest tests/test_agents.py -v   # agents only — no Docker needed (fake gateway)
+pytest tests/test_agents.py tests/test_coordinator.py -v   # agents + coordinator, no Docker needed
 ```
 
 The tests create extra customers and orders (orders go to C005, so the demo customers stay as
@@ -138,7 +153,8 @@ documented). For a clean demo database: `docker compose down -v && docker compos
 
 ## API overview
 
-All paths below are as seen through the gateway. Full specs: `docs/openapi/*.yaml`.
+All paths below are as seen through the gateway. Full specs: `docs/openapi/*.yaml`
+(customer-api, order-api, agent-api).
 
 | Method | Path | Purpose | Success | Errors |
 |---|---|---|---|---|
@@ -149,6 +165,8 @@ All paths below are as seen through the gateway. Full specs: `docs/openapi/*.yam
 | GET | `/api/orders/{id}` | Get one order with its items | 200 | 400, 404, 503 |
 | POST | `/api/orders` | Place an order (status PENDING, total computed) | 201 + `Location` | 400, 503 |
 | PATCH | `/api/orders/{id}` | Change status (enforced lifecycle) | 200 | 400, 404, 409, 503 |
+| POST | `/api/agent/query` | Ask in natural language (`{"query": "..."}`); see `docs/AGENTS.md` | 200 | 400, 503 |
+| GET | `/api/agent/agents` | Agents and skills discovered from Agent Cards | 200 | — |
 
 **Latest order for a customer:** `GET /api/orders?customer_id=C001&limit=1`
 
@@ -186,7 +204,7 @@ curl -i -H "apikey: chat-frontend-key" http://localhost:8000/api/customers/C001 
 - [x] Step 2 — Customer & Order services with data, validation, error model, OpenAPI, tests
 - [x] Step 3 — Gateway security: API keys, ACLs, rate limiting, logging, metrics
 - [x] Step 4 — Customer & Order agents (Agent Cards, A2A tasks, managed-API tools)
-- [ ] Step 5 — Coordinator agent: planning, discovery, delegation
+- [x] Step 5 — Coordinator agent: planning, discovery, delegation, answer composition
 - [ ] Step 6 — Failure handling (timeouts, unavailable backend/agent)
 - [ ] Step 7 — Observability (OpenTelemetry + Jaeger)
 - [ ] Step 8 — Tests and API collection

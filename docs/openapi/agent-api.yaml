@@ -1,0 +1,302 @@
+openapi: 3.1.0
+info:
+  title: Agent API (Coordinator Agent)
+  description: Natural-language access to customer and order information. The Coordinator
+    plans each request, delegates to specialist agents over A2A, and answers only
+    from their results.
+  version: 1.0.0
+servers:
+- url: http://localhost:8000/api
+  description: Local API gateway
+paths:
+  /agent/query:
+    post:
+      tags:
+      - agent
+      summary: Ask a question in natural language
+      description: Returns 200 when an answer could be given (`completed`, `not_found`,
+        `partial`, `unsupported`) and 503 with the same body when nothing could be
+        retrieved (`failed`).
+      operationId: query_agent_query_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        '503':
+          description: Required agents or backends unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - GatewayApiKey: []
+  /agent/agents:
+    get:
+      tags:
+      - agent
+      summary: Agents and skills discovered from Agent Cards
+      operationId: agents_agent_agents_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - GatewayApiKey: []
+components:
+  schemas:
+    ErrorBody:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+        details:
+          anyOf:
+          - items:
+              type: object
+            type: array
+          - type: 'null'
+          title: Details
+        correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Id
+      type: object
+      required:
+      - code
+      - message
+      title: ErrorBody
+    ErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      type: object
+      required:
+      - error
+      title: ErrorResponse
+    ExecutedStep:
+      properties:
+        id:
+          type: string
+          title: Id
+        skill:
+          type: string
+          title: Skill
+        agent:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent
+          description: Agent that executed the step, found through discovery
+        input:
+          type: object
+          title: Input
+        state:
+          type: string
+          enum:
+          - completed
+          - failed
+          - rejected
+          - skipped
+          title: State
+        outcome:
+          anyOf:
+          - type: string
+            enum:
+            - found
+            - not_found
+          - type: 'null'
+          title: Outcome
+        summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Summary
+          description: The specialist agent's own summary
+        error:
+          anyOf:
+          - type: object
+          - type: 'null'
+          title: Error
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+          description: Why a step was skipped
+        task_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Task Id
+          description: A2A task ID at the specialist agent
+        duration_ms:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Duration Ms
+      type: object
+      required:
+      - id
+      - skill
+      - agent
+      - input
+      - state
+      title: ExecutedStep
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    PlannedStep:
+      properties:
+        id:
+          type: string
+          title: Id
+        skill:
+          type: string
+          title: Skill
+        input:
+          type: object
+          title: Input
+        depends_on:
+          items:
+            type: string
+          type: array
+          title: Depends On
+        purpose:
+          type: string
+          title: Purpose
+      type: object
+      required:
+      - id
+      - skill
+      - input
+      - depends_on
+      - purpose
+      title: PlannedStep
+    QueryRequest:
+      properties:
+        query:
+          type: string
+          maxLength: 500
+          minLength: 1
+          title: Query
+          description: A natural-language request
+      additionalProperties: false
+      type: object
+      required:
+      - query
+      title: QueryRequest
+      examples:
+      - query: Find customer C001 and tell me their latest order status
+    QueryResponse:
+      properties:
+        query:
+          type: string
+          title: Query
+        status:
+          type: string
+          enum:
+          - completed
+          - not_found
+          - partial
+          - failed
+          - unsupported
+          title: Status
+        answer:
+          type: string
+          title: Answer
+          description: Built only from data returned by the agents
+        reasoning:
+          items:
+            type: string
+          type: array
+          title: Reasoning
+          description: The planner's decisions in plain language
+        plan:
+          items:
+            $ref: '#/components/schemas/PlannedStep'
+          type: array
+          title: Plan
+        steps:
+          items:
+            $ref: '#/components/schemas/ExecutedStep'
+          type: array
+          title: Steps
+        data:
+          type: object
+          title: Data
+          description: Structured results per step ID
+        correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Id
+        duration_ms:
+          type: number
+          title: Duration Ms
+      type: object
+      required:
+      - query
+      - status
+      - answer
+      - reasoning
+      - plan
+      - steps
+      - data
+      - correlation_id
+      - duration_ms
+      title: QueryResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+  securitySchemes:
+    GatewayApiKey:
+      type: apiKey
+      description: API key issued per consumer. Validated by the API gateway, not
+        by the service.
+      in: header
+      name: apikey

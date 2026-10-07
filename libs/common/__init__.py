@@ -20,9 +20,28 @@ gateway_api_key = APIKeyHeader(
     description="API key issued per consumer. Validated by the API gateway, not by the service.")
 
 
+def _document_400_not_422(app: FastAPI) -> None:
+    """FastAPI documents validation errors as 422, but our handler returns 400 (errors.py).
+    Remove the 422 entries so the published OpenAPI spec matches real behaviour."""
+    generate = app.openapi
+
+    def openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = generate()
+        for path in schema.get("paths", {}).values():
+            for operation in path.values():
+                if isinstance(operation, dict):
+                    operation.get("responses", {}).pop("422", None)
+        return schema
+
+    app.openapi = openapi
+
+
 def setup_service(app: FastAPI, service_name: str):
     """Apply the platform-wide conventions to a FastAPI app. Returns the service logger."""
     logger = configure_logging(service_name)
     install_error_handlers(app)
     install_request_middleware(app, logger)
+    _document_400_not_422(app)
     return logger

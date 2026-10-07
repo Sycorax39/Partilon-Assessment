@@ -167,6 +167,17 @@ services:
       - name: rate-limiting
         config: { minute: 60, policy: local, limit_by: ip, fault_tolerant: true }
 
+  - name: agent-api-docs
+    url: http://coordinator-agent:8000
+    routes:
+      - name: agent-api-docs-route
+        paths: ["/api/agent/docs", "/api/agent/openapi.json"]
+        methods: [GET]
+        strip_path: false
+    plugins:
+      - name: rate-limiting
+        config: { minute: 60, policy: local, limit_by: ip, fault_tolerant: true }
+
 # ---------------------------------------------------------------------------------------------
 # Global plugins (apply to every request)
 # ---------------------------------------------------------------------------------------------

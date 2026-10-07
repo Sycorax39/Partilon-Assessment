@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY libs/common /srv/libs/common
 COPY libs/a2a_core /srv/libs/a2a_core
-COPY agents/coordinator/app ./app
+COPY agents/coordinator/coordinator ./coordinator
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+CMD ["uvicorn", "coordinator.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

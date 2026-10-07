@@ -112,8 +112,11 @@ services:
       context: .
       dockerfile: agents/coordinator/Dockerfile
     environment:
-      CUSTOMER_AGENT_URL: http://customer-agent:8000
-      ORDER_AGENT_URL: http://order-agent:8000
+      # Addresses only. WHAT each agent can do is discovered from its Agent Card at startup.
+      AGENT_URLS: http://customer-agent:8000,http://order-agent:8000
+      AGENT_URL: http://coordinator-agent:8000/   # advertised in the coordinator's own Agent Card
+      A2A_TIMEOUT_SECONDS: "10"                   # per delegated task
+      QUERY_TIMEOUT_SECONDS: "12"                 # whole query (gateway allows 15 s)
     depends_on:
       customer-agent: { condition: service_healthy }
       order-agent: { condition: service_healthy }

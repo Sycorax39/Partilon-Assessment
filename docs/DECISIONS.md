@@ -82,14 +82,31 @@ Format: **Decision → Why → Trade-off / what I'd do in production.**
   of static keys; keys/secrets in a vault, not in `kong.yml`; mTLS between gateway and services;
   Redis-backed rate limiting so limits hold across several gateway nodes.
 
-## D5. Agents: custom Python, deterministic planner (LLM optional)
+## D5. Agents: custom Python, deterministic planner (no LLM required)
 
-- **Why:** The brief allows a deterministic agent if it clearly shows decision-making,
-  tool selection, orchestration and A2A. A rule-based intent parser makes every demo run
-  reproducible and needs no GPU or paid API. The planner is isolated behind one interface
-  so an Ollama-backed planner can be swapped in later.
-- **Trade-off:** Limited natural-language understanding — only the supported phrasings
-  work. This is documented as a known limitation.
+- **Why deterministic:** the brief accepts a deterministic agent if it clearly shows
+  decision-making, tool selection, orchestration and A2A. Rules make every demo run
+  reproducible, need no GPU, model download or paid API, and every decision can be explained
+  (the response includes the planner's `reasoning`).
+- **Separation of concerns in the coordinator:** plan → discover → delegate → answer, each a
+  separate module. The planner only says *which skills* are needed; *which agent* provides a
+  skill is learned from Agent Cards at run time. Adding an agent with a new skill needs a new
+  URL in `AGENT_URLS` plus a planner rule, but no code change to the executor.
+- **Dependencies between steps:** the order lookup runs only after the customer is confirmed
+  to exist; steps without dependencies run in parallel; results can feed later steps
+  (email → customer ID → latest order).
+- **Answers from templates over returned data only.** This is the strongest guarantee
+  against fabrication: the coordinator has no way to produce a fact an agent didn't return.
+  An LLM would write more fluent answers but would need guardrails (structured output, answer
+  validation against the step data) to keep the same guarantee.
+- **HTTP 503 only when nothing could be retrieved** (`failed`); `partial`, `not_found` and
+  `unsupported` are valid answers (200). Monitoring still sees outages as 5xx.
+- **Timeout budget:** API 5 s < agent task 8 s < A2A call 10 s < query 12 s < gateway 15 s,
+  so each layer answers in a controlled way before the layer above gives up.
+- **Trade-off / production:** only supported phrasings are understood. Next step: an LLM
+  (e.g. Ollama locally) used *only* as the planner, producing the same structured plan,
+  validated against the skills in the discovered Agent Cards; execution and answer
+  composition stay deterministic.
 
 ## D6. Agent-to-Agent: A2A protocol v0.3 (JSON-RPC), implemented by hand
 
